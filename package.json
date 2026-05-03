@@ -1,0 +1,44 @@
+{
+  "name": "project-layman",
+  "version": "1.0.0",
+  "description": "search projects like a caveman. fork what you like. start building.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "layman": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "doctor": "tsx src/index.ts --doctor"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@clack/prompts": "^0.9.1",
+    "@octokit/rest": "^21.1.1",
+    "chalk": "^5.4.1",
+    "cli-table3": "^0.6.5",
+    "execa": "^9.5.2",
+    "openai": "^4.82.0",
+    "p-limit": "^6.2.0",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  },
+  "keywords": [
+    "github",
+    "search",
+    "cli",
+    "caveman",
+    "fork",
+    "clone"
+  ],
+  "license": "MIT"
+}
