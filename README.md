@@ -1,172 +1,119 @@
 # Project Layman
 
-> Search GitHub like a caveman. Fork what you like. Start building.
+> UGH. Search GitHub like caveman. Fork what you like. Start building.
 
-A terminal app that lets you search GitHub by domain or idea, displays results with caveman-style plain-English descriptions, lets you fork/star repos, and opens them in your preferred editor.
+CLI tool that searches GitHub repos by topic, translates descriptions into caveman-speak, and lets you fork, star, clone, and open them in your editor -- all from the terminal.
 
-## Quick Start
+```
+┌─────┬────────────────────────────┬─────────┬──────────┬──────────────────────────────────────────┐
+│ #   │ Name                       │ Stars   │ Lang     │ UGH-DESCRIPTION                          │
+├─────┼────────────────────────────┼─────────┼──────────┼──────────────────────────────────────────┤
+│ 1   │ tokio-rs/tokio              │ 28.3k   │ Rust     │ UGH. very safe fast cave language make... │
+│ 2   │ actix/actix-web             │ 22.1k   │ Rust     │ UGH. STRONG web strong stick help bui... │
+└─────┴────────────────────────────┴─────────┴──────────┴──────────────────────────────────────────┘
+```
+
+## Install
 
 ```bash
-# One-line install
-curl -fsSL https://raw.githubusercontent.com/your-username/project-layman/main/install.sh | bash
+# Clone and link globally
+git clone https://github.com/saiyameh/project-layman.git
+cd project-layman
+npm install && npm run build && npm link
 
-# Or install manually via npm
-npm install -g project-layman
-
-# Run it
+# Then run from anywhere
 layman
 ```
 
-On first run, a setup wizard will guide you through configuration.
+First run triggers a setup wizard (GitHub token, editor, description mode).
 
-## Setup Requirements
+## Requirements
 
-- **Node.js** v18 or higher
-- **Git** installed and configured
-- **GitHub Personal Access Token** with `repo` and `read:user` scopes
-  - Create one at: https://github.com/settings/tokens
+- **Node.js** v18+
+- **Git**
+- **GitHub PAT** with `repo` + `read:user` scopes ([create one](https://github.com/settings/tokens))
 
-> **Tip:** If you have `GITHUB_TOKEN` or `GH_TOKEN` set in your environment, Layman will detect and offer to use it automatically.
+Auto-detects `GITHUB_TOKEN` / `GH_TOKEN` from your environment.
 
 ## Usage
 
-### Interactive Mode
-
 ```bash
-layman
-```
-
-1. Enter a search topic (e.g., "rust web servers")
-2. Choose how many results
-3. Browse the caveman-described results table
-4. Select repos to fork & clone, star, or preview README
-5. Open cloned repos in your editor
-
-### Direct Search
-
-```bash
-layman --query "react state management" --count 20
-```
-
-### JSON Output (for piping)
-
-```bash
-layman --query "python ML" --json | jq '.[] | .name'
+layman                                    # interactive mode
+layman --query "rust web servers" -c 20   # direct search
+layman --query "python ML" --json         # pipe-friendly JSON output
+layman --doctor                           # check if setup is healthy
+layman --history                          # view past searches
+layman --reset                            # reconfigure
 ```
 
 ## CLI Flags
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--query` | `-q` | Search query (skip interactive prompt) |
+| `--query` | `-q` | Search query (skip prompt) |
 | `--count` | `-c` | Number of results, 1-50 (default: 10) |
 | `--sort` | `-s` | Sort by: `stars`, `forks`, `updated` |
 | `--language` | `-l` | Filter by programming language |
 | `--mode` | | Description mode: `script` or `llm` |
-| `--editor` | | Editor command override for this run |
-| `--json` | | Output results as JSON |
-| `--history` | | View past search queries |
+| `--editor` | | Editor command override |
+| `--json` | | Output as JSON |
+| `--doctor` | | Run setup diagnostics |
+| `--history` | | View search history |
 | `--reset` | | Reset configuration |
 | `--help` | `-h` | Show help |
 | `--version` | `-v` | Show version |
 
 ## Description Modes
 
-### Caveman Script (default)
-
-Offline, deterministic transformation pipeline that converts repo descriptions into caveman-speak. No API key needed.
+**Caveman Script** (default) -- Offline deterministic pipeline. No API key needed. Replaces jargon with caveman-speak through 7 transform steps: normalize, keyword map, verb simplify, article removal, flavor inject, caveman wrap, truncate.
 
 ```
 "A lightweight TypeScript ORM for PostgreSQL"
 -> "UGH. even baby cave person understand javascript but with rules talk to data cave without magic words. CAVE PERSON LIKE."
 ```
 
-### LLM-Powered
+**LLM-Powered** -- Uses AI for richer descriptions. Supports Anthropic (Claude Haiku), OpenAI (GPT-4o Mini), and Ollama (local). Includes `p-limit` concurrency (3 parallel), exponential backoff retry, and silent fallback to script mode on failure.
 
-Uses AI to generate richer caveman descriptions. Supports:
+## Editors
 
-- **Anthropic** (Claude Haiku)
-- **OpenAI** (GPT-4o Mini)
-- **Ollama** (local models)
+Auto-detects from PATH: `code` (VS Code), `cursor`, `zed`, `webstorm`, `idea`, `subl`, `vim`, `nvim`. Custom commands supported. GUI editors launch detached; terminal editors get `stdio: inherit`.
 
-Configure during setup or override with `--mode llm`.
-
-## Supported Editors
-
-Layman auto-detects these editors from your PATH:
-
-| Editor | Command |
-|--------|---------|
-| VS Code | `code` |
-| Cursor | `cursor` |
-| Zed | `zed` |
-| WebStorm | `webstorm` |
-| IntelliJ IDEA | `idea` |
-| Sublime Text | `subl` |
-| Vim | `vim` |
-| Neovim | `nvim` |
-
-You can also specify any custom editor command.
-
-## Security
-
-- Your GitHub token is stored in `~/.layman/config.json` with `600` file permissions (owner read/write only)
-- Supports `GITHUB_TOKEN` / `GH_TOKEN` environment variables as an alternative
-- No tokens are ever transmitted except to GitHub's API and your configured LLM provider
-
-## Project Structure
+## Architecture
 
 ```
-project-layman/
-├── src/
-│   ├── index.ts                  # Main orchestrator
-│   ├── config.ts                 # Config management + setup wizard
-│   ├── github.ts                 # GitHub API client
-│   ├── workspace.ts              # Editor detection + workspace opener
-│   ├── describers/
-│   │   ├── index.ts              # Types + factory
-│   │   ├── script-describer.ts   # Offline caveman pipeline
-│   │   └── llm-describer.ts      # LLM-powered descriptions
-│   ├── ui/
-│   │   ├── prompts.ts            # Interactive prompts
-│   │   └── display.ts            # Terminal display utilities
-│   └── __tests__/
-│       └── script-describer.test.ts
-├── install.sh
-├── package.json
-├── tsconfig.json
-└── README.md
+src/
+├── index.ts              # CLI entry + orchestrator
+├── config.ts             # ~/.layman/ config, cache, history, setup wizard
+├── github.ts             # Octokit search, fork (poll-based), clone, star, README fetch
+├── doctor.ts             # --doctor diagnostics (14 checks)
+├── workspace.ts          # Editor detection + opener
+├── describers/
+│   ├── index.ts          # GitHubRepo interface + factory
+│   ├── script-describer  # 7-step offline pipeline (80+ keyword mappings)
+│   └── llm-describer     # Anthropic/OpenAI/Ollama with retry + fallback
+└── ui/
+    ├── prompts.ts        # clack interactive prompts (all isCancel-guarded)
+    └── display.ts        # Table rendering, JSON output, status messages
 ```
+
+## Key Design Decisions
+
+- **No `conf` package** -- manual `fs` read/write to `~/.layman/config.json`, `chmod 600`
+- **Token security** -- env var support (`GITHUB_TOKEN`), validated against API during setup, file permissions locked
+- **Poll-based fork wait** -- retries `repos.get()` up to 15 times instead of hardcoded `setTimeout(3000)`
+- **Clone URL from username** -- always constructs URL from authenticated user, not fork API response
+- **SSH support** -- detects `~/.ssh/id_*` keys, offers HTTPS vs SSH choice
+- **Search caching** -- results cached to `~/.layman/cache.json` with 10-min TTL
+- **Graceful exit** -- `SIGINT`/`SIGTERM` handlers + `isCancel()` on every clack prompt
 
 ## Development
 
 ```bash
-# Clone the repo
-git clone https://github.com/your-username/project-layman.git
-cd project-layman
-
-# Install dependencies
-npm install
-
-# Run in development
-npm run dev
-
-# Build
-npm run build
-
-# Run tests
-npm test
+npm install        # install deps
+npm run dev        # run with tsx
+npm run build      # compile TypeScript
+npm run doctor     # run diagnostics
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-thing`
-3. Make your changes
-4. Run tests: `npm test`
-5. Commit: `git commit -m 'Add amazing thing'`
-6. Push: `git push origin feature/amazing-thing`
-7. Open a Pull Request
 
 ## License
 

@@ -5,7 +5,6 @@ import path from 'node:path';
 import os from 'node:os';
 import * as p from '@clack/prompts';
 import type { GitHubRepo } from './describers/index.js';
-import type { LaymanConfig } from './config.js';
 import { printError, printInfo, printWarning } from './ui/display.js';
 import { askOverwriteRepo } from './ui/prompts.js';
 
