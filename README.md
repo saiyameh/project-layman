@@ -1,12 +1,12 @@
 <img width="411" height="231" alt="Screenshot 2026-05-03 at 15 30 57" src="https://github.com/user-attachments/assets/0b8650b5-b3bc-4f47-9f4e-59646b7c71a1" /><br>
 > UGH. search projects like caveman. fork what you like. start building.
 ```
-┌─────┬────────────────────────────┬─────────┬──────────┬──────────────────────────────────────────┐
-│ #   │ Name                       │ Stars   │ Lang     │ UGH-DESCRIPTION                          │
-├─────┼────────────────────────────┼─────────┼──────────┼──────────────────────────────────────────┤
-│ 1   │ tokio-rs/tokio             │  28.3k  │ Rust     │ UGH. very safe fast cave language make...│
-│ 2   │ actix/actix-web            │  22.1k  │ Rust     │ UGH. STRONG web strong stick help bui....│
-└─────┴────────────────────────────┴─────────┴──────────┴──────────────────────────────────────────┘
+┌─────┬─────────────────────────┬─────────┬──────────┬──────────────────────────────────────────┐
+│ #   │ Name                    │ Stars   │ Lang     │ UGH-DESCRIPTION                          │
+├─────┼─────────────────────────┼─────────┼──────────┼──────────────────────────────────────────┤
+│ 1   │ tokio-rs/tokio          │  28.3k  │ Rust     │ UGH. very safe fast cave language make...│
+│ 2   │ actix/actix-web         │  22.1k  │ Rust     │ UGH. STRONG web strong stick help bui....│
+└─────┴─────────────────────────┴─────────┴──────────┴──────────────────────────────────────────┘
 ```
 
 ## Install
