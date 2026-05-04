@@ -3,7 +3,7 @@ set -euo pipefail
 
 # --------------------------------------------------
 # Project Layman — Install Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/saiyameh/project-layman/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/saiyameh/project-layman/master/install.sh | bash
 # --------------------------------------------------
 
 REPO_URL="https://github.com/saiyameh/project-layman.git"

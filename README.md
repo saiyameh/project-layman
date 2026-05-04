@@ -12,6 +12,12 @@
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/saiyameh/project-layman/master/install.sh | bash
+```
+
+Or: 
+
+```bash
 # Clone and link globally
 git clone https://github.com/saiyameh/project-layman.git
 cd project-layman
