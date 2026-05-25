@@ -2,6 +2,19 @@
   "name": "project-layman",
   "version": "1.0.0",
   "description": "search projects like a caveman. fork what you like. start building.",
+  "author": "saiyameh",
+  "license": "MIT",
+  "homepage": "https://github.com/saiyameh/project-layman#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saiyameh/project-layman.git"
+  },
+  "bugs": {
+    "url": "https://github.com/saiyameh/project-layman/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,7 +27,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc && chmod +x dist/index.js",
     "start": "node dist/index.js",
-    "doctor": "tsx src/index.ts --doctor"
+    "doctor": "tsx src/index.ts --doctor",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -23,6 +37,7 @@
     "chalk": "^5.4.1",
     "cli-table3": "^0.6.5",
     "execa": "^9.5.2",
+    "madge": "^8.0.0",
     "openai": "^4.82.0",
     "p-limit": "^6.2.0",
     "simple-git": "^3.27.0"
@@ -38,7 +53,10 @@
     "cli",
     "caveman",
     "fork",
-    "clone"
-  ],
-  "license": "MIT"
+    "clone",
+    "contribute",
+    "open-source",
+    "developer-tools",
+    "github-cli"
+  ]
 }

@@ -195,6 +195,37 @@ export async function runDoctor(): Promise<void> {
     results.push({ label: 'Script describer', ok: false, detail: 'Pipeline error' });
   }
 
+  // 15-16. Contribute mode checks
+  console.log(chalk.dim('\n  -- Contribute mode --'));
+
+  if (hasConfig) {
+    const config = loadConfig();
+    const { llm } = config;
+    const llmReady = !!llm.provider && (
+      llm.provider === 'ollama' ||
+      (llm.provider === 'openai-compatible' && !!llm.base_url) ||
+      !!llm.api_key
+    );
+    results.push({
+      label: 'LLM for contribute',
+      ok: llmReady,
+      detail: llmReady
+        ? `${llm.provider} configured`
+        : 'Not configured — run layman --reset to set up LLM',
+    });
+  } else {
+    results.push({ label: 'LLM for contribute', ok: false, detail: 'No config — run layman first' });
+  }
+
+  const madgeCheck = spawnSync('npx', ['--yes', 'madge', '--version'], { stdio: 'pipe' });
+  results.push({
+    label: 'madge (JS/TS deps)',
+    ok: madgeCheck.status === 0,
+    detail: madgeCheck.status === 0
+      ? (madgeCheck.stdout?.toString().trim() || 'available')
+      : 'Not found — will use grep fallback for JS/TS repos',
+  });
+
   // Print results
   const passed = results.filter(r => r.ok).length;
   const failed = results.filter(r => !r.ok).length;

@@ -89,7 +89,7 @@ if [ -d "$INSTALL_DIR" ]; then
   info "Existing installation found at $INSTALL_DIR"
   info "Pulling latest changes..."
   cd "$INSTALL_DIR"
-  git pull --quiet origin main 2>/dev/null || git pull --quiet 2>/dev/null || true
+  git pull --quiet origin master 2>/dev/null || git pull --quiet 2>/dev/null || true
   success "Updated to latest version"
 else
   info "Cloning project-layman..."

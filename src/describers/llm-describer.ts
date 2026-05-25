@@ -34,7 +34,10 @@ async function callAnthropic(config: LaymanConfig, prompt: string): Promise<stri
 
 async function callOpenAI(config: LaymanConfig, prompt: string): Promise<string> {
   const { default: OpenAI } = await import('openai');
-  const client = new OpenAI({ apiKey: config.llm.api_key! });
+  const client = new OpenAI({
+    apiKey: config.llm.api_key ?? 'none',
+    ...(config.llm.base_url ? { baseURL: config.llm.base_url } : {}),
+  });
   const response = await client.chat.completions.create({
     model: config.llm.model || 'gpt-4o-mini',
     max_tokens: 100,
@@ -67,7 +70,8 @@ async function callLLMWithRetry(config: LaymanConfig, prompt: string, retries = 
     try {
       switch (config.llm.provider) {
         case 'anthropic': return await callAnthropic(config, prompt);
-        case 'openai': return await callOpenAI(config, prompt);
+        case 'openai':
+        case 'openai-compatible': return await callOpenAI(config, prompt);
         case 'ollama': return await callOllama(config, prompt);
         default: throw new Error('Unknown LLM provider');
       }

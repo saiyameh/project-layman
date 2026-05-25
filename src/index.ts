@@ -65,6 +65,9 @@ interface CLIFlags {
   json: boolean;
   history: boolean;
   doctor: boolean;
+  contribute: boolean;
+  contributePath: string | null;
+  undo: boolean;
 }
 
 function parseFlags(args: string[]): CLIFlags {
@@ -81,6 +84,9 @@ function parseFlags(args: string[]): CLIFlags {
     json: false,
     history: false,
     doctor: false,
+    contribute: false,
+    contributePath: null,
+    undo: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -92,6 +98,13 @@ function parseFlags(args: string[]): CLIFlags {
       case '--json': flags.json = true; break;
       case '--history': flags.history = true; break;
       case '--doctor': flags.doctor = true; break;
+      case '--undo': flags.undo = true; break;
+      case '--contribute':
+        flags.contribute = true;
+        if (args[i + 1] && !args[i + 1].startsWith('--')) {
+          flags.contributePath = args[++i];
+        }
+        break;
       case '--mode':
         flags.mode = args[++i] as 'script' | 'llm';
         break;
@@ -138,6 +151,7 @@ ${chalk.bold('USAGE:')}
   layman                       Interactive mode
   layman --query "react hooks" Search directly
   layman --history             View past searches
+  layman --contribute [path]   Guided OSS contribution flow
 
 ${chalk.bold('FLAGS:')}
   ${chalk.cyan('--query, -q')}    <text>     Search query (skip prompt)
@@ -149,6 +163,8 @@ ${chalk.bold('FLAGS:')}
   ${chalk.cyan('--json')}                    Output results as JSON
   ${chalk.cyan('--history')}                 View search history
   ${chalk.cyan('--doctor')}                  Run setup diagnostics
+  ${chalk.cyan('--contribute')}   [path]     Start contribution flow (defaults to cwd)
+  ${chalk.cyan('--undo')}                    Undo last --contribute action
   ${chalk.cyan('--reset')}                   Reset configuration
   ${chalk.cyan('--help, -h')}               Show this help
   ${chalk.cyan('--version, -v')}            Show version
@@ -256,6 +272,12 @@ async function main(): Promise<void> {
   } catch {
     printError('UGH. GITHUB TOKEN NO WORK. RUN layman --reset TO FIX.');
     process.exit(1);
+  }
+
+  if (flags.contribute) {
+    const { runContributeFlow } = await import('./contribute/index.js');
+    await runContributeFlow(config, flags.contributePath, flags.undo);
+    process.exit(0);
   }
 
   let keepSearching = true;

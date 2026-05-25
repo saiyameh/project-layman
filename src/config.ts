@@ -8,7 +8,7 @@ export interface LaymanConfig {
   github_token: string;
   description_mode: 'script' | 'llm';
   llm: {
-    provider: 'anthropic' | 'openai' | 'ollama' | null;
+    provider: 'anthropic' | 'openai' | 'ollama' | 'openai-compatible' | null;
     api_key: string | null;
     model: string | null;
     base_url: string | null;
@@ -202,33 +202,93 @@ export async function runSetupWizard(): Promise<LaymanConfig> {
   });
   handleCancel(descMode);
 
-  let llmProvider: 'anthropic' | 'openai' | 'ollama' | null = null;
+  let llmProvider: 'anthropic' | 'openai' | 'ollama' | 'openai-compatible' | null = null;
   let llmApiKey: string | null = null;
   let llmModel: string | null = null;
   let llmBaseUrl: string | null = null;
+
+  const OPENAI_COMPATIBLE_PRESETS: Record<string, { url: string; modelHint: string }> = {
+    groq:        { url: 'https://api.groq.com/openai/v1',      modelHint: 'llama-3.3-70b-versatile' },
+    together:    { url: 'https://api.together.xyz/v1',          modelHint: 'meta-llama/Llama-3-70b-chat-hf' },
+    mistral:     { url: 'https://api.mistral.ai/v1',            modelHint: 'mistral-small-latest' },
+    deepseek:    { url: 'https://api.deepseek.com/v1',          modelHint: 'deepseek-chat' },
+    perplexity:  { url: 'https://api.perplexity.ai',            modelHint: 'llama-3.1-sonar-small-128k-online' },
+    'lm-studio': { url: 'http://localhost:1234/v1',             modelHint: 'local-model' },
+    vllm:        { url: 'http://localhost:8000/v1',             modelHint: 'your-model-name' },
+    custom:      { url: '',                                      modelHint: '' },
+  };
 
   if (descMode === 'llm') {
     const provider = await p.select({
       message: 'Which LLM provider?',
       options: [
-        { value: 'anthropic', label: 'Anthropic (Claude)' },
-        { value: 'openai', label: 'OpenAI' },
-        { value: 'ollama', label: 'Ollama (local)' },
+        { value: 'anthropic',         label: 'Anthropic (Claude)',        hint: 'claude-haiku / sonnet / opus' },
+        { value: 'openai',            label: 'OpenAI',                    hint: 'gpt-4o-mini / gpt-4o' },
+        { value: 'openai-compatible', label: 'OpenAI-compatible API',     hint: 'Groq, Together, Mistral, DeepSeek, vLLM, LM Studio…' },
+        { value: 'ollama',            label: 'Ollama (local)',            hint: 'llama3, mistral, phi3…' },
       ],
     });
     handleCancel(provider);
-    llmProvider = provider as 'anthropic' | 'openai' | 'ollama';
+    llmProvider = provider as unknown as typeof llmProvider;
 
     if (llmProvider === 'anthropic') {
       const key = await p.text({ message: 'Enter your Anthropic API key', validate: (v) => { if (!v) return 'Required'; } });
       handleCancel(key);
       llmApiKey = key as string;
       llmModel = 'claude-haiku-4-5-20251001';
+
     } else if (llmProvider === 'openai') {
       const key = await p.text({ message: 'Enter your OpenAI API key', validate: (v) => { if (!v) return 'Required'; } });
       handleCancel(key);
       llmApiKey = key as string;
       llmModel = 'gpt-4o-mini';
+
+    } else if (llmProvider === 'openai-compatible') {
+      const preset = await p.select({
+        message: 'Select a provider (or choose Custom to enter your own URL)',
+        options: [
+          { value: 'groq',        label: 'Groq',        hint: 'api.groq.com' },
+          { value: 'together',    label: 'Together.ai',  hint: 'api.together.xyz' },
+          { value: 'mistral',     label: 'Mistral',      hint: 'api.mistral.ai' },
+          { value: 'deepseek',    label: 'DeepSeek',     hint: 'api.deepseek.com' },
+          { value: 'perplexity',  label: 'Perplexity',   hint: 'api.perplexity.ai' },
+          { value: 'lm-studio',   label: 'LM Studio',    hint: 'localhost:1234' },
+          { value: 'vllm',        label: 'vLLM',         hint: 'localhost:8000' },
+          { value: 'custom',      label: 'Custom',        hint: 'enter your own base URL' },
+        ],
+      });
+      handleCancel(preset);
+      const presetKey = preset as string;
+      const presetDefaults = OPENAI_COMPATIBLE_PRESETS[presetKey];
+
+      const url = await p.text({
+        message: 'Base URL (must end without trailing slash)',
+        defaultValue: presetDefaults.url || undefined,
+        placeholder: 'https://your-provider.com/v1',
+        validate: (v) => { if (!v) return 'Required'; },
+      });
+      handleCancel(url);
+      llmBaseUrl = url as string;
+
+      const needsKey = !['lm-studio', 'vllm'].includes(presetKey) || presetKey === 'custom';
+      if (needsKey) {
+        const key = await p.text({
+          message: 'API key (press Enter to skip if not required)',
+          placeholder: 'sk-...',
+        });
+        handleCancel(key);
+        llmApiKey = (key as string) || null;
+      }
+
+      const model = await p.text({
+        message: 'Model name',
+        defaultValue: presetDefaults.modelHint || undefined,
+        placeholder: 'model-name',
+        validate: (v) => { if (!v) return 'Required'; },
+      });
+      handleCancel(model);
+      llmModel = model as string;
+
     } else if (llmProvider === 'ollama') {
       const url = await p.text({ message: 'Ollama base URL', defaultValue: 'http://localhost:11434' });
       handleCancel(url);
