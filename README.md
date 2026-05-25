@@ -1,5 +1,5 @@
 <img width="411" height="231" alt="Screenshot 2026-05-03 at 15 30 57" src="https://github.com/user-attachments/assets/0b8650b5-b3bc-4f47-9f4e-59646b7c71a1" /><br>
-> UGH. ME WANT CONTRIBUTE. TOOL HANDLE REST. fork what you like. start building.
+> UGH. ME WANT CONTRIBUTE. TOOL HANDLE REST.
 ```
 ┌─────┬─────────────────────────┬─────────┬──────────┬──────────────────────────────────────────┐
 │ #   │ Name                    │ Stars   │ Lang     │ UGH-DESCRIPTION                          │
