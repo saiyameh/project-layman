@@ -7,7 +7,7 @@
 curl -fsSL https://raw.githubusercontent.com/saiyameh/project-layman/master/install.sh | bash
 ```
 
-Or:
+Or
 
 ```bash
 # Clone and link globally
@@ -64,7 +64,7 @@ layman --undo                                # undo last --contribute action
 
 ## Contribute flow (`--contribute`)
 
-`layman --contribute [path]` turns a cloned fork into a pull request with minimal friction:
+`layman --contribute [path/url]` turns a cloned fork into a pull request with minimal friction:
 
 1. **Preflight** — verifies the repo is a valid fork, sets up remotes, detects if your fork is stale and offers to sync
 2. **Guide ingestion** — reads `CONTRIBUTING.md` (or README sections, GitHub API, PR templates) to learn the repo's rules
