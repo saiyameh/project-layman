@@ -3,9 +3,41 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import chalk from 'chalk';
-import { configExists, loadConfig, validateToken, checkConnectivity } from './config.js';
+import { configExists, loadConfig, validateToken, checkConnectivity, type LaymanConfig } from './config.js';
 import { detectInstalledEditors, getEditorDisplayName } from './workspace.js';
 import { ScriptDescriber } from './describers/script-describer.js';
+import { callLLM } from './contribute/llm.js';
+
+const PROBE_PROMPTS = [
+  'Reply with exactly one word: pong',
+  'What is 2 + 2? Reply with only the number.',
+  'Name one planet. One word only.',
+  'Is the sky blue? Reply yes or no.',
+  'Count to 3. Digits only, comma-separated.',
+];
+
+async function checkLLMApiCall(config: LaymanConfig): Promise<CheckResult> {
+  const prompt = PROBE_PROMPTS[Math.floor(Math.random() * PROBE_PROMPTS.length)];
+  const start = Date.now();
+  try {
+    const reply = await callLLM(config, prompt, 20);
+    const ms = Date.now() - start;
+    const ok = reply.trim().length > 0;
+    return {
+      label: 'LLM API call',
+      ok,
+      detail: ok
+        ? `${ms}ms → "${reply.trim().slice(0, 50)}"`
+        : 'Empty response from LLM',
+    };
+  } catch (err) {
+    return {
+      label: 'LLM API call',
+      ok: false,
+      detail: `Failed: ${(err as Error).message.slice(0, 60)}`,
+    };
+  }
+}
 
 interface CheckResult {
   label: string;
@@ -195,7 +227,7 @@ export async function runDoctor(): Promise<void> {
     results.push({ label: 'Script describer', ok: false, detail: 'Pipeline error' });
   }
 
-  // 15-16. Contribute mode checks
+  // 15-17. Contribute mode checks
   console.log(chalk.dim('\n  -- Contribute mode --'));
 
   if (hasConfig) {
@@ -213,8 +245,20 @@ export async function runDoctor(): Promise<void> {
         ? `${llm.provider} configured`
         : 'Not configured — run layman --reset to set up LLM',
     });
+
+    if (llmReady && online) {
+      process.stdout.write(chalk.dim('  Probing LLM API...'));
+      const apiResult = await checkLLMApiCall(config);
+      process.stdout.write('\r' + ' '.repeat(30) + '\r');
+      results.push(apiResult);
+    } else if (!online) {
+      results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — no internet' });
+    } else {
+      results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — LLM not configured' });
+    }
   } else {
     results.push({ label: 'LLM for contribute', ok: false, detail: 'No config — run layman first' });
+    results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — no config' });
   }
 
   const madgeCheck = spawnSync('npx', ['--yes', 'madge', '--version'], { stdio: 'pipe' });
