@@ -1,6 +1,8 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
+import simpleGit from 'simple-git';
 import type { LaymanConfig } from '../config.js';
 import { runPreflight } from './preflight.js';
 import { readContributionGuide } from './reader.js';
@@ -8,13 +10,48 @@ import { askAndAnalyzeIntent } from './intent.js';
 import { buildDependencyGraph, findAffectedFiles } from './deps.js';
 import { writeBrief } from './highlight.js';
 import { suggestBranchName, runUndo, runWorkflow } from './workflow.js';
+import { printInfo, printError } from '../ui/display.js';
+
+async function resolveRepoPath(rawPath: string | null, config: LaymanConfig): Promise<string> {
+  if (!rawPath) return process.cwd();
+
+  const githubUrl = rawPath.match(/^https?:\/\/github\.com\/([^/]+)\/([^/#?]+)/);
+  const sshUrl    = rawPath.match(/^git@github\.com:([^/]+)\/([^/.#?]+)/);
+  const match = githubUrl ?? sshUrl;
+
+  if (match) {
+    const owner = match[1];
+    const repo  = match[2].replace(/\.git$/, '');
+    const destPath = path.join(config.workspace_dir, repo);
+
+    if (fs.existsSync(destPath)) {
+      printInfo(`UGH. ${repo} ALREADY IN CAVE: ${destPath}`);
+      return destPath;
+    }
+
+    const cloneUrl = `https://github.com/${owner}/${repo}.git`;
+    const s = p.spinner();
+    s.start(`UGH. DRAGGING ${repo} TO CAVE...`);
+    try {
+      await simpleGit().clone(cloneUrl, destPath);
+      s.stop(`Cloned ${owner}/${repo} → ${destPath}`);
+      return destPath;
+    } catch (err) {
+      s.stop('Clone failed');
+      printError(`UGH. CANNOT CLONE: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  }
+
+  return path.resolve(rawPath);
+}
 
 export async function runContributeFlow(
   config: LaymanConfig,
   rawPath: string | null,
   undo: boolean,
 ): Promise<void> {
-  const repoPath = path.resolve(rawPath ?? process.cwd());
+  const repoPath = await resolveRepoPath(rawPath, config);
 
   if (undo) {
     await runUndo(repoPath, config);
