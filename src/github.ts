@@ -71,12 +71,12 @@ export async function searchRepos(
   } catch (err: unknown) {
     const error = err as { status?: number; message?: string };
     if (error.status === 403) {
-      throw new Error('UGH. GITHUB SAY SLOW DOWN. WAIT BIT AND TRY AGAIN.');
+      throw new Error('GitHub rate limit reached. Wait, then try again.');
     }
     if (error.status === 401) {
-      throw new Error('UGH. GITHUB TOKEN NO WORK. RUN layman --reset TO FIX.');
+      throw new Error('GitHub token was rejected. Run layman --reset to update it.');
     }
-    throw new Error(`UGH. SEARCH BROKE: ${error.message || 'unknown error'}`);
+    throw new Error(`GitHub search failed: ${error.message || 'unknown error'}`);
   }
 }
 
@@ -93,7 +93,7 @@ export async function forkRepo(
   } catch (err: unknown) {
     const error = err as { status?: number };
     if (error.status !== 202) {
-      throw new Error('UGH. COULD NOT COPY REPO. CHECK TOKEN HAVE FORK PERMISSION.');
+      throw new Error('Could not create a fork. Check that your token can create forks.');
     }
   }
 
@@ -104,7 +104,7 @@ export async function forkRepo(
       break;
     } catch {
       if (i === maxAttempts - 1) {
-        printWarning('Fork taking long. Proceeding anyway...');
+        printWarning('Fork is still being created. Continuing.');
       }
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -118,7 +118,7 @@ export async function starRepo(token: string, owner: string, repo: string): Prom
   try {
     await octokit.rest.activity.starRepoForAuthenticatedUser({ owner, repo });
   } catch {
-    throw new Error(`UGH. COULD NOT STAR ${repo}. CHECK TOKEN PERMISSIONS.`);
+    throw new Error(`Could not star ${repo}. Check token permissions.`);
   }
 }
 
@@ -133,7 +133,7 @@ export async function fetchReadme(token: string, owner: string, repo: string): P
     }
     return content;
   } catch {
-    return 'UGH. NO README FOUND IN THIS CAVE.';
+    return 'No README found in this repository.';
   }
 }
 
@@ -165,7 +165,7 @@ export async function cloneRepo(
 
     if (choice === 'pull') {
       const s = p.spinner();
-      s.start(`UGH. UPDATING ${repoName}...`);
+      s.start(`Updating ${repoName}...`);
       try {
         const git = simpleGit(destPath);
         await git.pull();
@@ -173,7 +173,7 @@ export async function cloneRepo(
         return destPath;
       } catch {
         s.stop('Pull failed');
-        printError('UGH. GIT PULL BROKE. CHECK INTERNET AND TRY AGAIN.');
+        printError('Git pull failed. Check your connection and try again.');
         return destPath;
       }
     }
@@ -194,6 +194,6 @@ export async function cloneRepo(
     await git.clone(cloneUrl, destPath);
     return destPath;
   } catch {
-    throw new Error('UGH. GIT CLONE BROKE. CHECK INTERNET AND TRY AGAIN.');
+    throw new Error('Git clone failed. Check your connection and try again.');
   }
 }

@@ -1,219 +1,185 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import * as p from '@clack/prompts';
-import chalk from 'chalk';
 import { Octokit } from '@octokit/rest';
-import simpleGit from 'simple-git';
-import { forkRepo, getAuthenticatedUser } from '../github.js';
+import simpleGit, { type SimpleGit } from 'simple-git';
+import { getAuthenticatedUser } from '../github.js';
 import type { LaymanConfig } from '../config.js';
-import { printError, printInfo } from '../ui/display.js';
+import { getLLMConfigError } from './llm.js';
 
 export interface RepoContext {
-  repoPath: string;
-  upstreamOwner: string;
-  upstreamRepo: string;
-  forkOwner: string;
-  defaultBranch: string;
-  language: string[];
-  cloneProtocol: 'https' | 'ssh';
+  repoPath: string; upstreamOwner: string; upstreamRepo: string; forkOwner: string;
+  defaultBranch: string; language: string[]; cloneProtocol: 'https' | 'ssh';
+  pushOwner?: string; pushRepo?: string; baseRemote?: string; originalBranch?: string;
+  originalRemotes?: Record<string, string>; baseSha?: string;
 }
 
-function parseGitUrl(url: string): { owner: string; repo: string } | null {
-  const ssh = url.match(/git@github\.com:([^/]+)\/([^/.]+)(?:\.git)?$/);
+interface GitHubRepo {
+  owner: { login: string }; name: string; fork: boolean;
+  parent?: { owner: { login: string }; name: string };
+  permissions?: { push?: boolean }; archived: boolean; disabled: boolean; default_branch: string;
+}
+
+export interface GitHubClient {
+  repos: {
+    get(args: { owner: string; repo: string }): Promise<{ data: GitHubRepo }>;
+    createFork(args: { owner: string; repo: string }): Promise<unknown>;
+    listForAuthenticatedUser(args: { affiliation: 'owner'; per_page: number }): Promise<{ data: Array<Pick<GitHubRepo, 'owner' | 'name' | 'fork'>> }>;
+  };
+  paginate(method: GitHubClient['repos']['listForAuthenticatedUser'], args: { affiliation: 'owner'; per_page: number }): Promise<Array<Pick<GitHubRepo, 'owner' | 'name' | 'fork'>>>;
+}
+
+export interface PreflightOptions { resume?: boolean; client?: GitHubClient; forkOwner?: string; }
+interface GitRef { owner: string; repo: string }
+interface RepoIdentity { base: GitRef; push: GitRef; originIsPush: boolean }
+class LocalPreflightError extends Error {}
+
+export function parseGitUrl(url: string): GitRef | null {
+  const ssh = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
   if (ssh) return { owner: ssh[1], repo: ssh[2] };
-  const https = url.match(/github\.com\/([^/]+)\/([^/.]+?)(?:\.git)?$/);
-  if (https) return { owner: https[1], repo: https[2] };
+  const https = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  return https ? { owner: https[1], repo: https[2] } : null;
+}
+
+function sameRepo(left: GitRef, right: GitRef): boolean {
+  return left.owner.toLowerCase() === right.owner.toLowerCase() && left.repo.toLowerCase() === right.repo.toLowerCase();
+}
+function parentOf(repo: GitHubRepo): GitRef | null {
+  return repo.fork && repo.parent ? { owner: repo.parent.owner.login, repo: repo.parent.name } : null;
+}
+function isNotFound(error: unknown): boolean { return (error as { status?: number }).status === 404; }
+function formatRepo(ref: GitRef): string { return `${ref.owner}/${ref.repo}`; }
+function remoteUrl(ref: GitRef, protocol: 'https' | 'ssh'): string {
+  return protocol === 'ssh' ? `git@github.com:${ref.owner}/${ref.repo}.git` : `https://github.com/${ref.owner}/${ref.repo}.git`;
+}
+
+async function findFork(client: GitHubClient, owner: string, base: GitRef): Promise<GitRef | null> {
+  const listed = await client.paginate(client.repos.listForAuthenticatedUser, { affiliation: 'owner', per_page: 100 });
+  for (const repo of listed) {
+    if (!repo.fork) continue;
+    try {
+      const { data } = await client.repos.get({ owner, repo: repo.name });
+      const parent = parentOf(data);
+      if (parent && sameRepo(parent, base)) return { owner, repo: data.name };
+    } catch (error) { if (!isNotFound(error)) throw error; }
+  }
   return null;
 }
 
-function detectLanguages(repoPath: string): string[] {
-  const indicators: { file: string; lang: string }[] = [
-    { file: 'package.json', lang: 'js' },
-    { file: 'go.mod', lang: 'go' },
-    { file: 'Cargo.toml', lang: 'rust' },
-    { file: 'requirements.txt', lang: 'python' },
-    { file: 'setup.py', lang: 'python' },
-    { file: 'pyproject.toml', lang: 'python' },
-  ];
-
-  const langs: string[] = [];
-  const add = (lang: string) => { if (!langs.includes(lang)) langs.push(lang); };
-
-  for (const { file, lang } of indicators) {
-    if (fs.existsSync(path.join(repoPath, file))) add(lang);
-  }
-
-  if (langs.length === 0) {
-    try {
-      for (const entry of fs.readdirSync(repoPath, { withFileTypes: true })) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        const sub = path.join(repoPath, entry.name);
-        for (const { file, lang } of indicators) {
-          if (fs.existsSync(path.join(sub, file))) add(lang);
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
-  return langs.length > 0 ? langs : ['unknown'];
+/** Resolve forks by their parent identity, so a renamed fork never matches by name alone. */
+async function requireActiveBase(client: GitHubClient, base: GitRef): Promise<void> {
+  const { data } = await client.repos.get(base);
+  if (data.archived) throw new LocalPreflightError(`${formatRepo(base)} is archived.`);
+  if (data.disabled) throw new LocalPreflightError(`${formatRepo(base)} is disabled.`);
+  if (!data.default_branch) throw new LocalPreflightError(`${formatRepo(base)} has no default branch.`);
 }
 
-export async function runPreflight(repoPath: string, config: LaymanConfig): Promise<RepoContext> {
-  const resolved = path.resolve(repoPath);
-
-  if (!fs.existsSync(resolved)) {
-    printError(`UGH. PATH NOT EXIST: ${resolved}`);
-    process.exit(1);
+export async function resolveRepoIdentity(client: GitHubClient, forkOwner: string, origin: GitRef, resume = false): Promise<RepoIdentity> {
+  const { data: originRepo } = await client.repos.get(origin);
+  const parent = parentOf(originRepo);
+  const base = parent ?? { owner: originRepo.owner.login, repo: originRepo.name };
+  await requireActiveBase(client, base);
+  if (parent && (originRepo.owner.login.toLowerCase() === forkOwner.toLowerCase() || originRepo.permissions?.push)) {
+    return { base, push: origin, originIsPush: true };
   }
-  if (!fs.existsSync(path.join(resolved, '.git'))) {
-    printError(`UGH. NOT A GIT REPO: ${resolved}`);
-    process.exit(1);
-  }
+  if (originRepo.permissions?.push) return { base, push: base, originIsPush: true };
 
-  // LLM check
-  const { llm } = config;
-  const llmReady = llm.provider !== null && (
-    llm.provider === 'ollama' ||
-    (llm.provider === 'openai-compatible' && llm.base_url !== null) ||
-    llm.api_key !== null
-  );
-  if (!llmReady) {
-    printError('UGH. NEED BRAIN (LLM) FOR THIS. RUN layman --reset TO SET UP LLM.');
-    process.exit(1);
+  const exact = await client.repos.get({ owner: forkOwner, repo: base.repo }).then(({ data }) => data).catch((error: unknown) => {
+    if (isNotFound(error)) return null;
+    throw error;
+  });
+  const exactParent = exact ? parentOf(exact) : null;
+  if (exact && exactParent && sameRepo(exactParent, base)) {
+    const push = { owner: forkOwner, repo: exact.name };
+    return { base, push, originIsPush: sameRepo(origin, push) };
   }
+  const found = await findFork(client, forkOwner, base);
+  if (found) return { base, push: found, originIsPush: sameRepo(origin, found) };
+  if (exact) throw new LocalPreflightError(`${forkOwner}/${base.repo} exists but is not a fork of ${formatRepo(base)}.`);
+  if (resume) throw new LocalPreflightError('Resume cannot create a fork. Run a new preparation first.');
 
-  const git = simpleGit(resolved);
+  await client.repos.createFork(base);
+  const { data: created } = await client.repos.get({ owner: forkOwner, repo: base.repo });
+  const createdParent = parentOf(created);
+  if (!createdParent || !sameRepo(createdParent, base)) throw new LocalPreflightError(`Fork ${forkOwner}/${base.repo} does not point to ${formatRepo(base)}.`);
+  const push = { owner: forkOwner, repo: created.name };
+  return { base, push, originIsPush: sameRepo(origin, push) };
+}
+
+function detectLanguages(repoPath: string): string[] {
+  const indicators = [['package.json', 'js'], ['go.mod', 'go'], ['Cargo.toml', 'rust'], ['requirements.txt', 'python'], ['setup.py', 'python'], ['pyproject.toml', 'python']] as const;
+  const languages = [...new Set(indicators.filter(([file]) => fs.existsSync(path.join(repoPath, file))).map(([, language]) => language))];
+  return languages.length ? languages : ['unknown'];
+}
+
+async function requireSafeWorktree(git: SimpleGit, resume = false): Promise<{ repoPath: string; branch: string }> {
+  let repoPath: string;
+  try { repoPath = (await git.revparse(['--show-toplevel'])).trim(); } catch { throw new Error('This folder is not a Git repository.'); }
+  const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+  if (branch === 'HEAD') throw new Error('HEAD is detached. Check out a branch first.');
+  const status = await git.status();
+  if (status.conflicted.length) throw new Error('Git has merge conflicts. Resolve them first.');
+  if (!resume && !status.isClean()) throw new Error('Git has uncommitted work. Commit or stash it first.');
+  for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']) {
+    const markerPath = (await git.revparse(['--git-path', marker])).trim();
+    if (fs.existsSync(path.resolve(repoPath, markerPath))) throw new Error('A Git operation is not finished. Complete or abort it first.');
+  }
+  for (const rebaseDir of ['rebase-merge', 'rebase-apply']) {
+    const gitPath = (await git.revparse(['--git-path', rebaseDir])).trim();
+    if (fs.existsSync(path.resolve(repoPath, gitPath))) throw new Error('A rebase is not finished. Complete or abort it first.');
+  }
+  return { repoPath, branch };
+}
+
+export async function assertSafeWorktree(repoPath: string, resume = false): Promise<{ repoPath: string; branch: string }> {
+  return requireSafeWorktree(simpleGit(path.resolve(repoPath)), resume);
+}
+
+function repoFailure(error: unknown, ref: GitRef): Error {
+  const status = (error as { status?: number }).status;
+  if (status === 404) return new Error(`Cannot read ${formatRepo(ref)}. Check access.`);
+  if (status === 401 || status === 403) return new Error('The GitHub token cannot read this repository.');
+  return new Error(`Cannot verify ${formatRepo(ref)}.`);
+}
+
+export async function runPreflight(repoPath: string, config: LaymanConfig, options: PreflightOptions = {}): Promise<RepoContext> {
+  const llmError = getLLMConfigError(config.llm);
+  if (llmError) throw new Error(llmError);
+  const git = simpleGit(path.resolve(repoPath));
+  const { repoPath: root, branch } = await requireSafeWorktree(git, options.resume);
   const remotes = await git.getRemotes(true);
-
-  if (remotes.length === 0) {
-    printError('UGH. NO GIT REMOTES FOUND. IS THIS A REAL REPO?');
-    process.exit(1);
+  const originalRemotes = Object.fromEntries(remotes.map(remote => [remote.name, remote.refs.fetch]));
+  const originUrl = originalRemotes.origin;
+  const origin = originUrl && parseGitUrl(originUrl);
+  if (!origin) throw new Error('A GitHub origin remote is required.');
+  const protocol: 'https' | 'ssh' = originUrl.startsWith('git@') ? 'ssh' : 'https';
+  const client = options.client ?? new Octokit({ auth: config.github_token, userAgent: 'project-layman' }) as unknown as GitHubClient;
+  const forkOwner = options.forkOwner ?? await getAuthenticatedUser(config.github_token);
+  let identity: RepoIdentity;
+  try { identity = await resolveRepoIdentity(client, forkOwner, origin, options.resume); }
+  catch (error) { if (error instanceof LocalPreflightError) throw error; throw repoFailure(error, origin); }
+  let baseData: GitHubRepo;
+  try { ({ data: baseData } = await client.repos.get(identity.base)); } catch (error) { throw repoFailure(error, identity.base); }
+  if (baseData.archived) throw new Error(`${formatRepo(identity.base)} is archived.`);
+  if (baseData.disabled) throw new Error(`${formatRepo(identity.base)} is disabled.`);
+  if (!baseData.default_branch) throw new Error(`${formatRepo(identity.base)} has no default branch.`);
+  const existingUpstream = originalRemotes.upstream && parseGitUrl(originalRemotes.upstream);
+  if (originalRemotes.upstream && !existingUpstream) throw new Error('The upstream remote is not a GitHub remote.');
+  if (existingUpstream) {
+    let upstreamData: GitHubRepo;
+    try { ({ data: upstreamData } = await client.repos.get(existingUpstream)); } catch (error) { throw repoFailure(error, existingUpstream); }
+    const upstreamBase = { owner: upstreamData.owner.login, repo: upstreamData.name };
+    if (!sameRepo(upstreamBase, identity.base)) throw new Error(`The upstream remote is ${formatRepo(existingUpstream)}, but the base is ${formatRepo(identity.base)}.`);
   }
-
-  const originRemote = remotes.find(r => r.name === 'origin');
-  const upstreamRemote = remotes.find(r => r.name === 'upstream');
-
-  const cloneProtocol: 'https' | 'ssh' = (originRemote?.refs.fetch ?? '').startsWith('git@') ? 'ssh' : 'https';
-
-  const forkOwner = await getAuthenticatedUser(config.github_token);
-  const octokit = new Octokit({ auth: config.github_token, userAgent: 'project-layman' });
-
-  let upstreamOwner: string;
-  let upstreamRepo: string;
-
-  const originParsed = originRemote ? parseGitUrl(originRemote.refs.fetch) : null;
-
-  if (originParsed && originParsed.owner === forkOwner) {
-    // origin already points to the user's fork
-    upstreamRepo = originParsed.repo;
-
-    if (upstreamRemote) {
-      const up = parseGitUrl(upstreamRemote.refs.fetch);
-      upstreamOwner = up?.owner ?? originParsed.owner;
-    } else {
-      // Try to find parent via API
-      try {
-        const { data } = await octokit.repos.get({ owner: forkOwner, repo: originParsed.repo });
-        if (data.fork && data.parent) {
-          upstreamOwner = data.parent.owner.login;
-          const parentUrl = cloneProtocol === 'ssh'
-            ? `git@github.com:${upstreamOwner}/${upstreamRepo}.git`
-            : `https://github.com/${upstreamOwner}/${upstreamRepo}.git`;
-          await git.addRemote('upstream', parentUrl);
-          printInfo(`UGH. ADDED UPSTREAM REMOTE: ${upstreamOwner}/${upstreamRepo}.`);
-        } else {
-          printError('UGH. CANNOT DETERMINE UPSTREAM REPO. ADD upstream REMOTE MANUALLY: git remote add upstream <url>');
-          process.exit(1);
-        }
-      } catch {
-        printError('UGH. CANNOT DETERMINE UPSTREAM REPO. ADD upstream REMOTE MANUALLY: git remote add upstream <url>');
-        process.exit(1);
-      }
-    }
-  } else {
-    // origin points to upstream — check/create fork
-    const ref = originRemote ?? remotes[0];
-    const parsed = parseGitUrl(ref.refs.fetch);
-    if (!parsed) {
-      printError(`UGH. CANNOT PARSE GIT URL: ${ref.refs.fetch}`);
-      process.exit(1);
-    }
-    upstreamOwner = parsed.owner;
-    upstreamRepo = parsed.repo;
-
-    try {
-      await octokit.repos.get({ owner: forkOwner, repo: upstreamRepo });
-      // Fork exists — ensure upstream remote
-      if (!upstreamRemote) {
-        const upUrl = cloneProtocol === 'ssh'
-          ? `git@github.com:${upstreamOwner}/${upstreamRepo}.git`
-          : `https://github.com/${upstreamOwner}/${upstreamRepo}.git`;
-        await git.addRemote('upstream', upUrl);
-        printInfo('UGH. ADDED UPSTREAM REMOTE.');
-      }
-    } catch {
-      // Fork doesn't exist — create it
-      printInfo(`UGH. FORKING ${upstreamOwner}/${upstreamRepo}...`);
-      await forkRepo(config.github_token, upstreamOwner, upstreamRepo);
-
-      const forkUrl = cloneProtocol === 'ssh'
-        ? `git@github.com:${forkOwner}/${upstreamRepo}.git`
-        : `https://github.com/${forkOwner}/${upstreamRepo}.git`;
-      const upUrl = cloneProtocol === 'ssh'
-        ? `git@github.com:${upstreamOwner}/${upstreamRepo}.git`
-        : `https://github.com/${upstreamOwner}/${upstreamRepo}.git`;
-
-      await git.remote(['set-url', 'origin', forkUrl]);
-      await git.addRemote('upstream', upUrl);
-      printInfo('UGH. FORK CREATED. REMOTES SET UP. GOOD.');
-    }
+  if (options.resume && (!identity.originIsPush || (!existingUpstream && !sameRepo(identity.base, identity.push)))) throw new Error('Resume will not change remotes. Run a new preparation first.');
+  if (!options.resume) {
+    if (!identity.originIsPush) await git.remote(['set-url', 'origin', remoteUrl(identity.push, protocol)]);
+    if (!sameRepo(identity.base, identity.push) && !existingUpstream) await git.addRemote('upstream', remoteUrl(identity.base, protocol));
   }
-
-  // Detect default branch + archived/disabled check (Fix 7)
-  let defaultBranch = 'main';
-  try {
-    const { data } = await octokit.repos.get({ owner: upstreamOwner, repo: upstreamRepo });
-    if (data.archived) {
-      printError(`UGH. ${upstreamOwner}/${upstreamRepo} IS ARCHIVED. NO PRs ACCEPTED. FIND ACTIVE FORK.`);
-      process.exit(1);
-    }
-    if (data.disabled) {
-      printError(`UGH. ${upstreamOwner}/${upstreamRepo} IS DISABLED. CANNOT CONTRIBUTE.`);
-      process.exit(1);
-    }
-    defaultBranch = data.default_branch;
-  } catch (err) {
-    const msg = (err as { message?: string }).message ?? '';
-    if (msg.includes('exit')) throw err; // re-throw process.exit calls
-    /* keep 'main' on network errors */
-  }
-
-  // Stale fork sync check (Fix 3)
-  try {
-    await git.fetch('upstream');
-    const behindRaw = (await git.raw(['rev-list', '--count', `HEAD..upstream/${defaultBranch}`])).trim();
-    const behind = parseInt(behindRaw, 10);
-    if (!isNaN(behind) && behind > 0) {
-      printInfo(`UGH. YOUR FORK IS ${behind} COMMIT(S) BEHIND UPSTREAM.`);
-      const doSync = await p.confirm({ message: chalk.yellow('UGH. SYNC FORK WITH UPSTREAM NOW? (STRONGLY RECOMMENDED)') });
-      if (!p.isCancel(doSync) && doSync) {
-        const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-        if (current !== defaultBranch) await git.checkout(defaultBranch);
-        await git.merge([`upstream/${defaultBranch}`, '--ff-only']);
-        await git.push('origin', defaultBranch);
-        printInfo(`UGH. FORK SYNCED. ${behind} COMMITS CAUGHT UP. GOOD.`);
-        if (current !== defaultBranch) await git.checkout(current);
-      }
-    }
-  } catch { /* non-fatal — upstream branch may not exist yet */ }
-
-  return {
-    repoPath: resolved,
-    upstreamOwner,
-    upstreamRepo,
-    forkOwner,
-    defaultBranch,
-    language: detectLanguages(resolved),
-    cloneProtocol,
-  };
+  const baseRemote = sameRepo(identity.base, identity.push) ? 'origin' : 'upstream';
+  try { await git.fetch(baseRemote, baseData.default_branch); await git.raw(['ls-remote', '--heads', 'origin']); }
+  catch { throw new Error('Cannot reach Git remotes. Check access and try again.'); }
+  let baseSha: string;
+  try { baseSha = (await git.revparse([`${baseRemote}/${baseData.default_branch}`])).trim(); }
+  catch { throw new Error(`Cannot find ${baseRemote}/${baseData.default_branch}.`); }
+  return { repoPath: root, upstreamOwner: identity.base.owner, upstreamRepo: identity.base.repo, forkOwner, defaultBranch: baseData.default_branch, language: detectLanguages(root), cloneProtocol: protocol, pushOwner: identity.push.owner, pushRepo: identity.push.repo, baseRemote, originalBranch: branch, originalRemotes, baseSha };
 }

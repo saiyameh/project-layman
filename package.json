@@ -1,7 +1,7 @@
 {
   "name": "project-layman",
   "version": "1.0.0",
-  "description": "search projects like a caveman. fork what you like. start building.",
+  "description": "A CLI harness that guides GitHub contributions with short, clear instructions.",
   "author": "saiyameh",
   "license": "MIT",
   "homepage": "https://github.com/saiyameh/project-layman#readme",
@@ -28,7 +28,8 @@
     "build": "tsc && chmod +x dist/index.js",
     "start": "node dist/index.js",
     "doctor": "tsx src/index.ts --doctor",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

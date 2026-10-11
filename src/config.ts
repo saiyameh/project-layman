@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { checkLLMConnection, getLLMConfigError } from './contribute/llm.js';
+import { signInWithChatGPT, type OpenAIOAuthConnection } from './auth/openai.js';
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
 
@@ -12,6 +15,7 @@ export interface LaymanConfig {
     api_key: string | null;
     model: string | null;
     base_url: string | null;
+    oauth?: OpenAIOAuthConnection;
   };
   editor: string;
   editor_command: string;
@@ -37,7 +41,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 
 function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
 }
 
@@ -52,8 +56,13 @@ export function loadConfig(): LaymanConfig {
 
 export function saveConfig(config: LaymanConfig): void {
   ensureConfigDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-  fs.chmodSync(CONFIG_FILE, 0o600);
+  const temporary = `${CONFIG_FILE}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.renameSync(temporary, CONFIG_FILE);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
 }
 
 export function resetConfig(): void {
@@ -108,7 +117,7 @@ export function saveCache(key: string, results: unknown[]): void {
 
 function handleCancel(value: unknown): void {
   if (p.isCancel(value)) {
-    p.cancel(chalk.yellow('UGH. CAVE PERSON LEAVE. BYE.'));
+    p.cancel(chalk.yellow('Setup stopped.'));
     process.exit(0);
   }
 }
@@ -141,67 +150,7 @@ export async function validateToken(token: string): Promise<string | null> {
   } catch { return null; }
 }
 
-export async function runSetupWizard(): Promise<LaymanConfig> {
-  p.intro(chalk.bold.yellow('First-time setup'));
-
-  const envToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-
-  let githubToken: string;
-  if (envToken) {
-    const useEnv = await p.confirm({
-      message: `Found ${chalk.cyan('GITHUB_TOKEN')} in environment. Use it?`,
-    });
-    handleCancel(useEnv);
-    if (useEnv) {
-      githubToken = envToken;
-    } else {
-      const token = await p.text({
-        message: 'Enter your GitHub Personal Access Token',
-        placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxx',
-        validate: (v) => {
-          if (!v) return 'Token is required';
-          if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) {
-            return 'Token must start with ghp_ or github_pat_';
-          }
-        },
-      });
-      handleCancel(token);
-      githubToken = token as string;
-    }
-  } else {
-    const token = await p.text({
-      message: 'Enter your GitHub Personal Access Token',
-      placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxx',
-      validate: (v) => {
-        if (!v) return 'Token is required';
-        if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) {
-          return 'Token must start with ghp_ or github_pat_';
-        }
-      },
-    });
-    handleCancel(token);
-    githubToken = token as string;
-  }
-
-  const s = p.spinner();
-  s.start('Validating token with GitHub...');
-  const username = await validateToken(githubToken);
-  if (!username) {
-    s.stop(chalk.red('Token validation failed'));
-    p.cancel('UGH. GITHUB TOKEN NO WORK. CHECK AND TRY AGAIN.');
-    process.exit(1);
-  }
-  s.stop(chalk.green(`Authenticated as ${chalk.bold(username)}`));
-
-  const descMode = await p.select({
-    message: 'How should repos be described?',
-    options: [
-      { value: 'script', label: 'Caveman Script', hint: 'offline, no API needed (default)' },
-      { value: 'llm', label: 'LLM-powered', hint: 'richer descriptions, needs API key' },
-    ],
-  });
-  handleCancel(descMode);
-
+async function askLLMConfig(current?: LaymanConfig['llm']): Promise<LaymanConfig['llm']> {
   let llmProvider: 'anthropic' | 'openai' | 'ollama' | 'openai-compatible' | null = null;
   let llmApiKey: string | null = null;
   let llmModel: string | null = null;
@@ -218,86 +167,193 @@ export async function runSetupWizard(): Promise<LaymanConfig> {
     custom:      { url: '',                                      modelHint: '' },
   };
 
-  if (descMode === 'llm') {
-    const provider = await p.select({
-      message: 'Which LLM provider?',
+  const provider = await p.select({
+    message: 'Choose an AI provider',
+    initialValue: current?.provider ?? undefined,
+    options: [
+      { value: 'anthropic',         label: 'Anthropic (Claude)',        hint: 'claude-haiku / sonnet / opus' },
+      { value: 'openai',            label: 'OpenAI',                    hint: 'gpt-4o-mini / gpt-4o' },
+      { value: 'openai-compatible', label: 'OpenAI-compatible API',     hint: 'Groq, Together, Mistral, DeepSeek, vLLM, LM Studio…' },
+      { value: 'ollama',            label: 'Ollama (local)',            hint: 'llama3, mistral, phi3…' },
+    ],
+  });
+  handleCancel(provider);
+  llmProvider = provider as LaymanConfig['llm']['provider'];
+
+  const previous = current?.provider === llmProvider ? current : undefined;
+  if (llmProvider === 'anthropic') {
+    const key = await p.password({ message: 'Enter your Anthropic API key (blank keeps saved key)', validate: (v) => { if (!v.trim() && !previous?.api_key) return 'Required'; } });
+    handleCancel(key);
+    llmApiKey = (key as string).trim() || previous?.api_key || null;
+    llmModel = 'claude-haiku-4-5-20251001';
+
+  } else if (llmProvider === 'openai') {
+    const login = await p.select({
+      message: 'OpenAI login method', initialValue: previous?.oauth ? 'chatgpt' : 'api-key',
       options: [
-        { value: 'anthropic',         label: 'Anthropic (Claude)',        hint: 'claude-haiku / sonnet / opus' },
-        { value: 'openai',            label: 'OpenAI',                    hint: 'gpt-4o-mini / gpt-4o' },
-        { value: 'openai-compatible', label: 'OpenAI-compatible API',     hint: 'Groq, Together, Mistral, DeepSeek, vLLM, LM Studio…' },
-        { value: 'ollama',            label: 'Ollama (local)',            hint: 'llama3, mistral, phi3…' },
+        { value: 'chatgpt', label: 'Continue with ChatGPT', hint: 'use your eligible ChatGPT plan' },
+        { value: 'api-key', label: 'API key', hint: 'use OpenAI API billing' },
       ],
     });
-    handleCancel(provider);
-    llmProvider = provider as unknown as typeof llmProvider;
-
-    if (llmProvider === 'anthropic') {
-      const key = await p.text({ message: 'Enter your Anthropic API key', validate: (v) => { if (!v) return 'Required'; } });
-      handleCancel(key);
-      llmApiKey = key as string;
-      llmModel = 'claude-haiku-4-5-20251001';
-
-    } else if (llmProvider === 'openai') {
-      const key = await p.text({ message: 'Enter your OpenAI API key', validate: (v) => { if (!v) return 'Required'; } });
-      handleCancel(key);
-      llmApiKey = key as string;
-      llmModel = 'gpt-4o-mini';
-
-    } else if (llmProvider === 'openai-compatible') {
-      const preset = await p.select({
-        message: 'Select a provider (or choose Custom to enter your own URL)',
-        options: [
-          { value: 'groq',        label: 'Groq',        hint: 'api.groq.com' },
-          { value: 'together',    label: 'Together.ai',  hint: 'api.together.xyz' },
-          { value: 'mistral',     label: 'Mistral',      hint: 'api.mistral.ai' },
-          { value: 'deepseek',    label: 'DeepSeek',     hint: 'api.deepseek.com' },
-          { value: 'perplexity',  label: 'Perplexity',   hint: 'api.perplexity.ai' },
-          { value: 'lm-studio',   label: 'LM Studio',    hint: 'localhost:1234' },
-          { value: 'vllm',        label: 'vLLM',         hint: 'localhost:8000' },
-          { value: 'custom',      label: 'Custom',        hint: 'enter your own base URL' },
-        ],
-      });
-      handleCancel(preset);
-      const presetKey = preset as string;
-      const presetDefaults = OPENAI_COMPATIBLE_PRESETS[presetKey];
-
-      const url = await p.text({
-        message: 'Base URL (must end without trailing slash)',
-        defaultValue: presetDefaults.url || undefined,
-        placeholder: 'https://your-provider.com/v1',
-        validate: (v) => { if (!v) return 'Required'; },
-      });
-      handleCancel(url);
-      llmBaseUrl = url as string;
-
-      const needsKey = !['lm-studio', 'vllm'].includes(presetKey) || presetKey === 'custom';
-      if (needsKey) {
-        const key = await p.text({
-          message: 'API key (press Enter to skip if not required)',
-          placeholder: 'sk-...',
-        });
-        handleCancel(key);
-        llmApiKey = (key as string) || null;
-      }
-
-      const model = await p.text({
-        message: 'Model name',
-        defaultValue: presetDefaults.modelHint || undefined,
-        placeholder: 'model-name',
-        validate: (v) => { if (!v) return 'Required'; },
-      });
-      handleCancel(model);
-      llmModel = model as string;
-
-    } else if (llmProvider === 'ollama') {
-      const url = await p.text({ message: 'Ollama base URL', defaultValue: 'http://localhost:11434' });
-      handleCancel(url);
-      llmBaseUrl = url as string;
-      const model = await p.text({ message: 'Ollama model name', placeholder: 'llama3', validate: (v) => { if (!v) return 'Required'; } });
-      handleCancel(model);
-      llmModel = model as string;
+    handleCancel(login);
+    if (login === 'chatgpt') {
+      p.log.info('Browser opens for Sign in with ChatGPT. Your password stays with ChatGPT.');
+      const oauth = await signInWithChatGPT(previous?.oauth);
+      llmApiKey = null;
+      llmModel = previous?.model || 'gpt-4o-mini';
+      return { provider: 'openai', api_key: null, model: llmModel, base_url: null, oauth };
     }
+    const key = await p.password({ message: 'Enter your OpenAI API key (blank keeps saved key)', validate: (v) => { if (!v.trim() && !previous?.api_key) return 'Required'; } });
+    handleCancel(key);
+    llmApiKey = (key as string).trim() || previous?.api_key || null;
+    llmModel = 'gpt-4o-mini';
+
+  } else if (llmProvider === 'openai-compatible') {
+    const preset = await p.select({
+      message: 'Select a provider (or choose Custom to enter your own URL)',
+      initialValue: previous ? 'custom' : undefined,
+      options: [
+        { value: 'groq',        label: 'Groq',        hint: 'api.groq.com' },
+        { value: 'together',    label: 'Together.ai',  hint: 'api.together.xyz' },
+        { value: 'mistral',     label: 'Mistral',      hint: 'api.mistral.ai' },
+        { value: 'deepseek',    label: 'DeepSeek',     hint: 'api.deepseek.com' },
+        { value: 'perplexity',  label: 'Perplexity',   hint: 'api.perplexity.ai' },
+        { value: 'lm-studio',   label: 'LM Studio',    hint: 'localhost:1234' },
+        { value: 'vllm',        label: 'vLLM',         hint: 'localhost:8000' },
+        { value: 'custom',      label: 'Custom',        hint: 'enter your own base URL' },
+      ],
+    });
+    handleCancel(preset);
+    const presetKey = preset as string;
+    const presetDefaults = OPENAI_COMPATIBLE_PRESETS[presetKey];
+
+    const url = await p.text({
+      message: 'Provider base URL',
+      defaultValue: (presetKey === 'custom' ? previous?.base_url : null) || presetDefaults.url || undefined,
+      placeholder: 'https://your-provider.com/v1',
+      validate: (v) => getLLMConfigError({ provider: 'openai-compatible', model: 'probe', api_key: null, base_url: v }) || undefined,
+    });
+    handleCancel(url);
+    llmBaseUrl = url as string;
+
+    const savedKey = (url as string).trim().replace(/\/+$/, '') === previous?.base_url?.trim().replace(/\/+$/, '') ? previous?.api_key : null;
+    const needsKey = !['lm-studio', 'vllm'].includes(presetKey);
+    if (needsKey) {
+      const key = await p.password({
+        message: savedKey ? 'API key (blank keeps saved key)' : 'API key (blank skips)',
+      });
+      handleCancel(key);
+      llmApiKey = (key as string).trim() || savedKey || null;
+    }
+
+    const model = await p.text({
+      message: 'Model name',
+      defaultValue: (presetKey === 'custom' ? previous?.model : null) || presetDefaults.modelHint || undefined,
+      placeholder: 'model-name',
+      validate: (v) => { if (!v.trim()) return 'Required'; },
+    });
+    handleCancel(model);
+    llmModel = model as string;
+
+  } else if (llmProvider === 'ollama') {
+    const url = await p.text({ message: 'Ollama base URL', defaultValue: previous?.base_url || 'http://localhost:11434', validate: (v) => getLLMConfigError({ provider: 'ollama', model: 'probe', api_key: null, base_url: v }) || undefined });
+    handleCancel(url);
+    llmBaseUrl = url as string;
+    const model = await p.text({ message: 'Ollama model name', defaultValue: previous?.model || undefined, placeholder: 'llama3', validate: (v) => { if (!v.trim()) return 'Required'; } });
+    handleCancel(model);
+    llmModel = model as string;
   }
+
+  if (llmProvider === 'anthropic' || llmProvider === 'openai') {
+    const model = await p.text({ message: 'Model name', defaultValue: current?.provider === llmProvider ? current.model || llmModel! : llmModel!, validate: v => { if (!v.trim()) return 'Required'; } });
+    handleCancel(model);
+    llmModel = model as string;
+  }
+  return { provider: llmProvider, api_key: llmApiKey, model: llmModel?.trim() || null, base_url: llmBaseUrl?.trim().replace(/\/+$/, '') || null };
+}
+
+async function validateLLM(config: LaymanConfig): Promise<void> {
+  p.log.info('Layman sends contribution rules and your task to this provider.');
+  const spinner = p.spinner();
+  spinner.start('Checking provider and model...');
+  try {
+    await checkLLMConnection(config);
+    spinner.stop('Provider is ready.');
+  } catch (error) {
+    spinner.stop('Provider check failed.');
+    throw error;
+  }
+}
+
+export async function runLLMSetup(config: LaymanConfig): Promise<LaymanConfig> {
+  p.intro('Connect an AI provider. Other settings stay the same.');
+  const updated = { ...config, llm: await askLLMConfig(config.llm) };
+  await validateLLM(updated);
+  saveConfig(updated);
+  p.outro('AI provider saved.');
+  return updated;
+}
+
+export async function runSetupWizard(): Promise<LaymanConfig> {
+  p.intro(chalk.bold.yellow('First-time setup'));
+
+  const envToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+
+  let githubToken: string;
+  if (envToken) {
+    const useEnv = await p.confirm({
+      message: `Found ${chalk.cyan('GITHUB_TOKEN')} in environment. Use it?`,
+    });
+    handleCancel(useEnv);
+    if (useEnv) {
+      githubToken = envToken;
+    } else {
+      const token = await p.password({
+        message: 'Enter your GitHub Personal Access Token',
+        validate: (v) => {
+          if (!v) return 'Token is required';
+          if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) {
+            return 'Token must start with ghp_ or github_pat_';
+          }
+        },
+      });
+      handleCancel(token);
+      githubToken = token as string;
+    }
+  } else {
+    const token = await p.password({
+      message: 'Enter your GitHub Personal Access Token',
+      validate: (v) => {
+        if (!v) return 'Token is required';
+        if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) {
+          return 'Token must start with ghp_ or github_pat_';
+        }
+      },
+    });
+    handleCancel(token);
+    githubToken = token as string;
+  }
+
+  const s = p.spinner();
+  s.start('Validating token with GitHub...');
+  const username = await validateToken(githubToken);
+  if (!username) {
+    s.stop(chalk.red('Token validation failed'));
+    p.cancel('GitHub token was rejected. Check it and try again.');
+    process.exit(1);
+  }
+  s.stop(chalk.green(`Authenticated as ${chalk.bold(username)}`));
+
+  const descMode = await p.select({
+    message: 'How should repos be described?',
+    options: [
+      { value: 'script', label: 'Script', hint: 'offline descriptions (default)' },
+      { value: 'llm', label: 'LLM-powered', hint: 'use the connected model' },
+    ],
+  });
+  handleCancel(descMode);
+
+  const llm = await askLLMConfig();
 
   const { detectInstalledEditors } = await import('./workspace.js');
   const detected = detectInstalledEditors();
@@ -312,7 +368,7 @@ export async function runSetupWizard(): Promise<LaymanConfig> {
 
   let editorCommand = editorChoice as string;
   if (editorCommand === '__custom') {
-    const cmd = await p.text({ message: 'Enter editor command', validate: (v) => { if (!v) return 'Required'; } });
+    const cmd = await p.text({ message: 'Enter editor command', validate: (v) => { if (!v.trim()) return 'Required'; } });
     handleCancel(cmd);
     editorCommand = cmd as string;
   }
@@ -339,12 +395,7 @@ export async function runSetupWizard(): Promise<LaymanConfig> {
   const config: LaymanConfig = {
     github_token: githubToken,
     description_mode: descMode as 'script' | 'llm',
-    llm: {
-      provider: llmProvider,
-      api_key: llmApiKey,
-      model: llmModel,
-      base_url: llmBaseUrl,
-    },
+    llm,
     editor: editorCommand,
     editor_command: editorCommand,
     workspace_dir: (wsDir as string).replace(/^~/, os.homedir()),
@@ -352,10 +403,11 @@ export async function runSetupWizard(): Promise<LaymanConfig> {
     clone_protocol: cloneProtocol,
   };
 
+  await validateLLM(config);
   saveConfig(config);
 
-  p.log.info(chalk.dim('Config contains your GitHub token. File permissions set to 600.'));
-  p.outro(chalk.bold.green('UGH. LAYMAN READY'));
+  p.log.info(chalk.dim('Config contains login keys. Only your account can read the file.'));
+  p.outro(chalk.bold.green('Layman is ready.'));
 
   return config;
 }

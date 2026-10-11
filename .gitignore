@@ -27,9 +27,10 @@ npm-debug.log*
 
 # Claude Code local settings
 .claude/
-
+.codegraph
 # oh-my-claudecode runtime state
 .omc/
+.omx/
 
 # Planning docs (dev-only)
 implementation_plan.md

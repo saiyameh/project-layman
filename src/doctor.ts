@@ -6,36 +6,15 @@ import chalk from 'chalk';
 import { configExists, loadConfig, validateToken, checkConnectivity, type LaymanConfig } from './config.js';
 import { detectInstalledEditors, getEditorDisplayName } from './workspace.js';
 import { ScriptDescriber } from './describers/script-describer.js';
-import { callLLM } from './contribute/llm.js';
-
-const PROBE_PROMPTS = [
-  'Reply with exactly one word: pong',
-  'What is 2 + 2? Reply with only the number.',
-  'Name one planet. One word only.',
-  'Is the sky blue? Reply yes or no.',
-  'Count to 3. Digits only, comma-separated.',
-];
+import { checkLLMConnection, getLLMConfigError } from './contribute/llm.js';
 
 async function checkLLMApiCall(config: LaymanConfig): Promise<CheckResult> {
-  const prompt = PROBE_PROMPTS[Math.floor(Math.random() * PROBE_PROMPTS.length)];
   const start = Date.now();
   try {
-    const reply = await callLLM(config, prompt, 20);
-    const ms = Date.now() - start;
-    const ok = reply.trim().length > 0;
-    return {
-      label: 'LLM API call',
-      ok,
-      detail: ok
-        ? `${ms}ms → "${reply.trim().slice(0, 50)}"`
-        : 'Empty response from LLM',
-    };
+    await checkLLMConnection(config);
+    return { label: 'LLM API call', ok: true, detail: `Connected (${Date.now() - start}ms)` };
   } catch (err) {
-    return {
-      label: 'LLM API call',
-      ok: false,
-      detail: `Failed: ${(err as Error).message.slice(0, 60)}`,
-    };
+    return { label: 'LLM API call', ok: false, detail: (err as Error).message };
   }
 }
 
@@ -61,7 +40,7 @@ function getCommandVersion(cmd: string): string {
 
 export async function runDoctor(): Promise<void> {
   console.log(chalk.bold.yellow('\n  Layman Doctor\n'));
-  console.log(chalk.dim('  Running diagnostics...\n'));
+  console.log(chalk.dim('  Checking setup...\n'));
 
   const results: CheckResult[] = [];
 
@@ -73,7 +52,7 @@ export async function runDoctor(): Promise<void> {
     ok: nodeMajor >= 18,
     detail: nodeMajor >= 18
       ? `${nodeVersion} (v18+ required)`
-      : `${nodeVersion} -- UPGRADE TO v18+`,
+      : `${nodeVersion}. Install Node.js v18 or later.`,
   });
 
   // 2. Git
@@ -81,7 +60,7 @@ export async function runDoctor(): Promise<void> {
   results.push({
     label: 'Git',
     ok: hasGit,
-    detail: hasGit ? getCommandVersion('git') : 'NOT FOUND -- install git',
+    detail: hasGit ? getCommandVersion('git') : 'Not found. Install Git.',
   });
 
   // 3. Internet connectivity
@@ -99,7 +78,7 @@ export async function runDoctor(): Promise<void> {
     ok: hasConfig,
     detail: hasConfig
       ? path.join(os.homedir(), '.layman', 'config.json')
-      : 'Not found -- run layman to set up',
+      : 'Not found. Run layman to set up.',
   });
 
   // 5. Config file permissions
@@ -112,7 +91,7 @@ export async function runDoctor(): Promise<void> {
       results.push({
         label: 'Config permissions',
         ok: isSecure,
-        detail: isSecure ? '600 (secure)' : `${mode} -- should be 600, run layman --reset`,
+        detail: isSecure ? '600 (secure)' : `${mode}. Use 600. Run layman --reset.`,
       });
     } catch {
       results.push({ label: 'Config permissions', ok: false, detail: 'Could not read file stats' });
@@ -126,9 +105,7 @@ export async function runDoctor(): Promise<void> {
     results.push({
       label: 'GitHub token',
       ok: tokenSet,
-      detail: tokenSet
-        ? `${config.github_token.substring(0, 8)}...`
-        : 'Not set -- run layman --reset',
+      detail: tokenSet ? 'Set (hidden)' : 'Not set. Run layman --reset.',
     });
 
     // 7. Token validation
@@ -150,18 +127,6 @@ export async function runDoctor(): Promise<void> {
         : 'Script (offline)',
     });
 
-    // 9. LLM provider (if applicable)
-    if (config.description_mode === 'llm') {
-      const hasKey = config.llm.provider === 'ollama' || !!config.llm.api_key;
-      results.push({
-        label: 'LLM API key',
-        ok: hasKey,
-        detail: hasKey
-          ? `${config.llm.provider} configured`
-          : `No API key for ${config.llm.provider}`,
-      });
-    }
-
     // 10. Editor
     const editorInstalled = checkCommand(config.editor_command);
     results.push({
@@ -178,7 +143,7 @@ export async function runDoctor(): Promise<void> {
     results.push({
       label: 'Workspace dir',
       ok: true,
-      detail: wsExists ? `${wsDir} (exists)` : `${wsDir} (will be created on first clone)`,
+      detail: wsExists ? `${wsDir} (exists)` : `${wsDir}. Created on first clone.`,
     });
 
     // 12. Clone protocol
@@ -189,7 +154,7 @@ export async function runDoctor(): Promise<void> {
       results.push({
         label: 'SSH keys',
         ok: hasKeys,
-        detail: hasKeys ? 'Found in ~/.ssh' : 'No SSH keys found -- clone may fail',
+        detail: hasKeys ? 'Found in ~/.ssh' : 'No SSH keys found. Clone may fail.',
       });
     }
     results.push({
@@ -206,7 +171,7 @@ export async function runDoctor(): Promise<void> {
     ok: editors.length > 0,
     detail: editors.length > 0
       ? editors.map(e => getEditorDisplayName(e)).join(', ')
-      : 'None detected',
+      : 'None found',
   });
 
   // 14. Script describer sanity check
@@ -217,7 +182,7 @@ export async function runDoctor(): Promise<void> {
       description: 'A fast web framework', stars: 10, forks: 1,
       language: 'TypeScript', url: '', topics: [],
     });
-    const works = testResult.startsWith('UGH.');
+    const works = testResult.trim().length > 0;
     results.push({
       label: 'Script describer',
       ok: works,
@@ -228,47 +193,35 @@ export async function runDoctor(): Promise<void> {
   }
 
   // 15-17. Contribute mode checks
-  console.log(chalk.dim('\n  -- Contribute mode --'));
+  console.log(chalk.dim('\n  Contribution setup\n'));
 
   if (hasConfig) {
     const config = loadConfig();
     const { llm } = config;
-    const llmReady = !!llm.provider && (
-      llm.provider === 'ollama' ||
-      (llm.provider === 'openai-compatible' && !!llm.base_url) ||
-      !!llm.api_key
-    );
+    const llmError = getLLMConfigError(llm);
+    const llmReady = llmError === null;
     results.push({
       label: 'LLM for contribute',
       ok: llmReady,
       detail: llmReady
         ? `${llm.provider} configured`
-        : 'Not configured — run layman --reset to set up LLM',
+        : llmError!,
     });
 
-    if (llmReady && online) {
+    if (llmReady) {
       process.stdout.write(chalk.dim('  Probing LLM API...'));
       const apiResult = await checkLLMApiCall(config);
       process.stdout.write('\r' + ' '.repeat(30) + '\r');
       results.push(apiResult);
-    } else if (!online) {
-      results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — no internet' });
     } else {
-      results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — LLM not configured' });
+      results.push({ label: 'LLM API call', ok: false, detail: 'Skipped. AI provider is not configured.' });
     }
   } else {
-    results.push({ label: 'LLM for contribute', ok: false, detail: 'No config — run layman first' });
-    results.push({ label: 'LLM API call', ok: false, detail: 'Skipped — no config' });
+    results.push({ label: 'LLM for contribute', ok: false, detail: 'No configuration. Run layman first.' });
+    results.push({ label: 'LLM API call', ok: false, detail: 'Skipped. No configuration.' });
   }
 
-  const madgeCheck = spawnSync('npx', ['--yes', 'madge', '--version'], { stdio: 'pipe' });
-  results.push({
-    label: 'madge (JS/TS deps)',
-    ok: madgeCheck.status === 0,
-    detail: madgeCheck.status === 0
-      ? (madgeCheck.stdout?.toString().trim() || 'available')
-      : 'Not found — will use grep fallback for JS/TS repos',
-  });
+  results.push({ label: 'File guidance', ok: true, detail: 'Static source scan; no project tools or downloads' });
 
   // Print results
   const passed = results.filter(r => r.ok).length;
@@ -285,8 +238,8 @@ export async function runDoctor(): Promise<void> {
   console.log(chalk.dim(`  ${passed} passed, ${failed} failed`));
 
   if (failed === 0) {
-    console.log(chalk.bold.green('\n  UGH. EVERYTHING GOOD. CAVE READY.\n'));
+    console.log(chalk.bold.green('\n  Setup is ready.\n'));
   } else {
-    console.log(chalk.bold.yellow(`\n  UGH. ${failed} THING${failed > 1 ? 'S' : ''} NEED FIX.\n`));
+    console.log(chalk.bold.yellow(`\n  Fix ${failed} item${failed > 1 ? 's' : ''}.\n`));
   }
 }

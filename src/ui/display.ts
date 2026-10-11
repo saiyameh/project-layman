@@ -3,34 +3,34 @@ import Table from 'cli-table3';
 import type { GitHubRepo } from '../describers/index.js';
 
 export function printBanner(): void {
-  const banner = chalk.bold.yellow(`
-  _        _  __   __ __  __      _    _   _ 
- | |      / \\ \\ \\ / /|  \\/  |   / \\  | \\ | |
- | |     / _ \\ \\ V / | |\\/| |  / _ \\ |  \\| |
- | |___ / ___ \\ | |  | |  | | / ___ \\| |\\  |
- |_____/_/   \\_\\|_|  |_|  |_|/_/   \\_\\_| \\_|
+  const caveman = chalk.bold.yellow(`
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠲⠦⠤⣄⣀⠀⢀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣀⠀⠀⠀⠀⠀⠘⠿⠟⠀⢤⠀⣠⣤⣄⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣿⡆⠀⠀⠀⠀⢰⡖⠀⠀⠀⠀⠙⠿⠿⠓⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⠃⠀⠀⠀⠀⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢀⣠⣤⣤⣤⣄⡉⠁⣠⡄⢀⣀⣼⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣰⣿⣿⠟⣿⣿⡿⠁⣴⣿⠁⡸⠿⠿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢰⡿⠋⠀⢰⠿⠋⡀⢈⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣿⡇⠀⠀⠠⠴⣾⣿⣿⣯⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠉⠁⠀⠀⢀⣀⣼⣿⡿⠿⠿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠈⠛⣿⠿⣄⠀⢠⣾⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⢀⣿⠀⠁⠀⠁⠀⠀⠉⢿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⢀⣤⣤⣤⣤⣾⡿⠃⠀⠀⠀⠀⠀⠀⠘⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 `);
-  const subtitle = chalk.bold.white('          PROJECT LAYMAN UGH.\n');
-  console.log(banner + subtitle);
+  console.log(caveman + chalk.bold.white('          PROJECT LAYMAN UGH.\n'));
 }
 
 function formatStars(stars: number): string {
-  if (stars >= 1000) {
-    return chalk.bold.white(`${(stars / 1000).toFixed(1)}k`);
-  }
+  if (stars >= 1000) return chalk.bold.white(`${(stars / 1000).toFixed(1)}k`);
   return chalk.bold.white(String(stars));
 }
 
 function formatForks(forks: number): string {
-  if (forks >= 1000) {
-    return `${(forks / 1000).toFixed(1)}k`;
-  }
+  if (forks >= 1000) return `${(forks / 1000).toFixed(1)}k`;
   return String(forks);
-}
-
-function truncateStr(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return str.substring(0, maxLen - 3) + '...';
 }
 
 export function printRepoTable(repos: GitHubRepo[]): void {
@@ -41,7 +41,7 @@ export function printRepoTable(repos: GitHubRepo[]): void {
       chalk.bold.yellow('Stars'),
       chalk.bold.yellow('Forks'),
       chalk.bold.yellow('Lang'),
-      chalk.bold.yellow('UGH-DESCRIPTION'),
+      chalk.bold.yellow('Description'),
     ],
     colWidths: [5, 32, 9, 9, 14, 52],
     wordWrap: true,
@@ -51,11 +51,11 @@ export function printRepoTable(repos: GitHubRepo[]): void {
   for (const repo of repos) {
     table.push([
       chalk.dim(String(repo.rank)),
-      chalk.cyan(truncateStr(repo.full_name, 30)),
+      chalk.cyan(repo.full_name),
       formatStars(repo.stars),
       formatForks(repo.forks),
       repo.language ? chalk.green(repo.language) : chalk.dim('??'),
-      chalk.white(truncateStr(repo.caveman_description || '', 48)),
+      chalk.white(repo.caveman_description || ''),
     ]);
   }
 

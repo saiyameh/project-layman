@@ -48,7 +48,7 @@ export async function openInEditor(paths: string[], editorCommand: string): Prom
       await execa(editorCommand, args, { detached: true, stdio: 'ignore' });
     }
   } catch {
-    throw new Error('UGH. EDITOR NOT FOUND. RUN layman --reset TO PICK NEW ONE.');
+    throw new Error('Editor not found. Run layman --reset to choose another editor.');
   }
 }
 

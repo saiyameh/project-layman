@@ -4,14 +4,14 @@ import type { GitHubRepo } from '../describers/index.js';
 
 function handleCancel(value: unknown): void {
   if (p.isCancel(value)) {
-    p.cancel(chalk.yellow('UGH. CAVE PERSON LEAVE. BYE.'));
+    p.cancel(chalk.yellow('Stopped.'));
     process.exit(0);
   }
 }
 
 export async function askDomain(): Promise<string> {
   const domain = await p.text({
-    message: 'What domain or idea are you exploring?',
+    message: 'What are you looking for?',
     placeholder: 'e.g. rust web servers, ML image classification',
     validate: (v) => {
       if (!v || !v.trim()) return 'Must not be empty';
@@ -23,7 +23,7 @@ export async function askDomain(): Promise<string> {
 
 export async function askResultCount(defaultCount: number = 10): Promise<number> {
   const count = await p.text({
-    message: `How many results? (default: ${defaultCount})`,
+    message: `How many results? Default: ${defaultCount}`,
     defaultValue: String(defaultCount),
     validate: (v) => {
       const n = parseInt(v, 10);
@@ -38,11 +38,11 @@ export async function askRepoSelection(repos: GitHubRepo[]): Promise<GitHubRepo[
   const options = repos.map(repo => ({
     value: repo,
     label: repo.full_name,
-    hint: repo.caveman_description ? repo.caveman_description.substring(0, 60) : undefined,
+    hint: repo.caveman_description || undefined,
   }));
 
   const selected = await p.multiselect({
-    message: 'Select repos (space = select, enter = confirm)',
+    message: 'Select repositories. Space selects. Enter confirms.',
     options,
     required: true,
   });
@@ -54,12 +54,12 @@ export type RepoAction = 'fork_clone' | 'star' | 'fork_clone_star' | 'readme';
 
 export async function askRepoAction(): Promise<RepoAction> {
   const action = await p.select({
-    message: 'What would you like to do with selected repos?',
+    message: 'Choose an action.',
     options: [
-      { value: 'fork_clone', label: 'Fork & Clone', hint: 'fork to your account and clone locally' },
-      { value: 'star', label: 'Star only', hint: 'add a star without forking' },
-      { value: 'fork_clone_star', label: 'Fork, Clone & Star', hint: 'do everything' },
-      { value: 'readme', label: 'View README', hint: 'peek at a repo\'s README first' },
+      { value: 'fork_clone', label: 'Fork and clone', hint: 'Fork: copy to your GitHub account. Clone: download it here.' },
+      { value: 'star', label: 'Star', hint: 'Save this repository to your GitHub starred list.' },
+      { value: 'fork_clone_star', label: 'Fork, clone, and star', hint: 'Copy it to your account, download it here, and star it.' },
+      { value: 'readme', label: 'Read README', hint: 'Read the project instructions before you act.' },
     ],
   });
   handleCancel(action);
@@ -73,7 +73,7 @@ export async function askReadmeRepo(repos: GitHubRepo[]): Promise<GitHubRepo> {
   }));
 
   const selected = await p.select({
-    message: 'Which repo\'s README do you want to view?',
+    message: 'Which repository README do you want to read?',
     options,
   });
   handleCancel(selected);
@@ -90,7 +90,7 @@ export async function askEditor(detectedEditors: string[], savedEditor?: string)
   options.push({ value: '__custom', label: 'Other (enter command)' });
 
   const choice = await p.select({
-    message: 'Open workspace in which editor?',
+    message: 'Which editor should open this workspace?',
     options,
   });
   handleCancel(choice);
@@ -109,19 +109,48 @@ export async function askEditor(detectedEditors: string[], savedEditor?: string)
 
 export async function askSearchAgain(): Promise<boolean> {
   const again = await p.confirm({
-    message: 'UGH. SEARCH MORE THINGS?',
+    message: 'Search again?',
   });
   handleCancel(again);
   return again as boolean;
 }
 
+export type StartAction = 'start' | 'resume' | 'find';
+
+export async function askStartAction(): Promise<StartAction> {
+  const action = await p.select({
+    message: 'What do you want to do?',
+    initialValue: 'start',
+    options: [
+      { value: 'start', label: 'Start contribution', hint: 'Prepare a new change for review.' },
+      { value: 'resume', label: 'Resume work', hint: 'Continue saved contribution work.' },
+      { value: 'find', label: 'Find a project', hint: 'Search GitHub projects.' },
+    ],
+  });
+  handleCancel(action);
+  return action as StartAction;
+}
+
+export async function askContributionPath(resume: boolean): Promise<string> {
+  const location = await p.text({
+    message: resume ? 'Enter the existing local repository folder.' : 'Enter a repository folder or GitHub URL.',
+    placeholder: resume ? '/path/to/repository' : 'https://github.com/owner/repository',
+    validate: (value) => {
+      if (!value.trim()) return 'Enter a repository location.';
+      if (resume && /^(?:https?:|git@)/.test(value.trim())) return 'Resume work needs an existing local repository folder.';
+    },
+  });
+  handleCancel(location);
+  return (location as string).trim();
+}
+
 export async function askOverwriteRepo(repoName: string): Promise<'overwrite' | 'skip' | 'pull'> {
   const choice = await p.select({
-    message: `${repoName} already exists in your cave. What do?`,
+    message: `${repoName} already exists. Choose an action.`,
     options: [
-      { value: 'pull', label: 'Update (git pull)', hint: 'keep existing and pull latest' },
-      { value: 'overwrite', label: 'Overwrite', hint: 'delete and re-clone' },
-      { value: 'skip', label: 'Skip', hint: 'leave it alone' },
+      { value: 'pull', label: 'Update (`git pull`)', hint: 'Keep this folder and download its latest changes.' },
+      { value: 'overwrite', label: 'Overwrite', hint: 'Delete this folder, then clone the repository again.' },
+      { value: 'skip', label: 'Skip', hint: 'Leave this folder unchanged.' },
     ],
   });
   handleCancel(choice);

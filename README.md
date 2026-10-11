@@ -1,129 +1,104 @@
-<img width="411" height="231" alt="Screenshot 2026-05-03 at 15 30 57" src="https://github.com/user-attachments/assets/0b8650b5-b3bc-4f47-9f4e-59646b7c71a1" /><br>
-> UGH. ME WANT CONTRIBUTE. TOOL HANDLE REST.
+> Write code. Layman handles contribution steps.
+
+> Layman is a CLI harness for GitHub contributions. You write code in your editor. Layman reads repository rules, records checks, prepares public text, and tracks the PR.
 
 ## Install
+
+Use Node.js 18 or later and Git.
+
+On macOS or Linux, use the Bash installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/saiyameh/project-layman/master/install.sh | bash
 ```
 
-Or
+The script installs to `~/.layman-src`. It builds Layman and links the command. It does not run `sudo` or start setup.
+Set `LAYMAN_INSTALL_DIR` to use another absolute folder path.
+After installation, run `layman`. If linking fails, use the direct command shown by the script.
+
+Or build from source:
 
 ```bash
-# Clone and link globally
 git clone https://github.com/saiyameh/project-layman.git
 cd project-layman
-npm install && npm run build && npm link
-
-# Then run from anywhere
+npm ci --include=dev
+npm run build
+npm link
 layman
 ```
 
-First run triggers a setup wizard (GitHub token, editor, description mode).
+Connect a GitHub token, a model, and an editor. Configure Git transport access separately with SSH or a Git credential manager.
 
-## Requirements
+Run `layman` in a terminal to start a contribution, resume saved work, or find a project.
+For scripts, use explicit flags such as `--contribute`, `--query`, or `--json`.
 
-**Node.js v18+** and **Git** must be installed.
-
-**GitHub PAT** with `repo` + `read:user` scopes ([create one](https://github.com/settings/tokens)) — needed for search, fork, clone, and the `--contribute` flow (issue creation, PR submission).
-
-> Auto-detects `GITHUB_TOKEN` / `GH_TOKEN` from your environment.
-
-## Usage
+## Connect a model
 
 ```bash
-layman                                       # interactive mode
-layman --query "rust web servers" -c 20      # direct search
-layman --query "python ML" --json            # pipe-friendly JSON output
-layman --doctor                              # check if setup is healthy
-layman --history                             # view past searches
-layman --reset                               # reconfigure
-layman --contribute ./my-fork                # guided OSS contribution flow
-layman --contribute                          # same, defaults to current directory
-layman --undo                                # undo last --contribute action
+layman --brain
 ```
 
-## CLI Flags
+Use Anthropic or OpenAI API keys, a local Ollama model, or an OpenAI-compatible endpoint. Use HTTPS for remote endpoints. Local endpoints can use HTTP.
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--query` | `-q` | Search query (skip prompt) |
-| `--count` | `-c` | Number of results, 1-50 (default: 10) |
-| `--sort` | `-s` | Sort by: `stars`, `forks`, `updated` |
-| `--language` | `-l` | Filter by programming language |
-| `--mode` | | Description mode: `script` or `llm` |
-| `--editor` | | Editor command override |
-| `--json` | | Output as JSON |
-| `--contribute` | | Guided OSS contribution flow (optional path, defaults to cwd) |
-| `--undo` | | Undo the last `--contribute` action (stepwise) |
-| `--doctor` | | Run setup diagnostics |
-| `--history` | | View search history |
-| `--reset` | | Reset configuration |
-| `--help` | `-h` | Show help |
-| `--version` | `-v` | Show version |
+OpenAI also supports **Sign in with ChatGPT** through its documented open-source OAuth flow. Account eligibility and provider limits apply. Other providers use keys or local endpoints; Layman does not reuse credentials from their CLI tools.
 
-## Contribute flow (`--contribute`)
+The guided workflow requires a working model. Search descriptions can still use script mode. Status and safe recovery remain available when the model is down.
 
-`layman --contribute [path/url]` turns a cloned fork into a pull request with minimal friction:
+## Contribution steps
 
-1. **Preflight** — verifies the repo is a valid fork, sets up remotes, detects if your fork is stale and offers to sync
-2. **Guide ingestion** — reads `CONTRIBUTING.md` (or README sections, GitHub API, PR templates) to learn the repo's rules
-3. **Intent** — asks what you want to do; uses an LLM to analyse scope and produce a `[MUST]`/`[SHOULD]`/`[NICE]` checklist
-4. **Dependency graph** — maps affected files across JS/TS, Go, Rust, and Python codebases
-5. **Brief** — writes `LAYMAN_BRIEF.md` in the repo root and opens it in your editor
-6. **Workflow** — branch → stage (with secret-file detection) → commit (editable message) → push → PR → CI polling
-
-`layman --undo` walks back the last action one step at a time: PR → push → branch.
-
-> Requires an LLM provider to be configured (run `layman --reset` to set one up).
-
-## LLM Providers
-
-When description mode is set to `llm`, or for the `--contribute` flow:
-
-| Provider | Notes |
-|----------|-------|
-| Anthropic (Claude) | `claude-haiku-4-5` / sonnet / opus |
-| OpenAI | `gpt-4o-mini` / `gpt-4o` |
-| OpenAI-compatible | Groq, Together.ai, Mistral, DeepSeek, Perplexity, LM Studio, vLLM — any OpenAI-compatible endpoint |
-| Ollama | Local models — llama3, mistral, phi3, and others |
-
-## Editors
-
-Auto-detects from PATH: `code` (VS Code), `cursor`, `zed`, `webstorm`, `idea`, `subl`, `vim`, `nvim`. Custom commands supported. GUI editors launch detached; terminal editors get `stdio: inherit`.
-
-## Architecture
-
+```bash
+layman --contribute ./repo                 # prepare and save a contribution
+layman --contribute https://github.com/owner/repo
+layman --contribute ./repo --issue 123      # link a verified open issue
+layman --contribute ./repo --new            # prepare another contribution
+cd ./repo
+layman --resume                            # choose the next saved step
+layman --check                             # approve and run project checks
+layman --submit                            # review exact files and public text
+layman --status                            # read CI, reviews, merge, or closure
+layman --cleanup                           # clean owned resources after a terminal PR
+layman --undo                              # undo a verified owned resource
 ```
-src/
-├── index.ts              # CLI entry + orchestrator
-├── config.ts             # ~/.layman/ config, cache, history, setup wizard
-├── github.ts             # Octokit search, fork (poll-based), clone, star, README fetch
-├── doctor.ts             # --doctor diagnostics (16 checks)
-├── workspace.ts          # Editor detection + opener
-├── contribute/
-│   ├── index.ts          # --contribute entry point
-│   ├── preflight.ts      # Fork setup, upstream detection, archived check, stale sync
-│   ├── reader.ts         # CONTRIBUTING.md ingestion (5-step cascade)
-│   ├── intent.ts         # LLM intent analysis + keyword extraction
-│   ├── deps.ts           # Polyglot dependency graph (JS/TS, Go, Rust, Python)
-│   ├── highlight.ts      # LAYMAN_BRIEF.md writer + editor opener
-│   ├── workflow.ts       # Branch → stage → commit → push → PR + CI polling
-│   └── llm.ts            # LLM abstraction (Anthropic / OpenAI / Ollama / compatible)
-├── describers/
-│   ├── index.ts          # GitHubRepo interface + factory
-│   ├── script-describer  # 7-step offline pipeline (80+ keyword mappings)
-│   └── llm-describer     # Anthropic/OpenAI/Ollama/openai-compatible with retry + fallback
-└── ui/
-    ├── prompts.ts        # clack interactive prompts (all isCancel-guarded)
-    └── display.ts        # Table rendering, JSON output, status messages
+
+1. **Connect model:** check the selected model.
+2. **Read rules:** review repository rules and unknown requirements. Complete personal agreements yourself.
+3. **Prepare work:** select a branch, a separate work area. Write code in your editor.
+4. **Check work:** select contribution files. Approve each project command before execution.
+5. **Review and publish:** inspect the diff, the changed lines, and the public text. Confirm publication.
+6. **Wait for review:** inspect CI, the automatic checks, and maintainer feedback. Submit revisions to the same PR.
+7. **Finish contribution:** report merge or closure. Keep unrelated resources and unmerged commits.
+
+A PR asks the project to review your changes. A commit saves changes in Git.
+
+CLI text uses short, clear sentences and plain explanations beside Git terms.
+AI explanations use the same rules. Commands, paths, and source errors stay exact. Public drafts follow repository conventions.
+
+Contribution panels show the current step, repository, branch, saved progress, and next action.
+Check summaries separate passed, failed, skipped, waiting, and unknown results. Open log details when needed.
+Review the exact files, destination, diff, commit message, and PR text before publication.
+Contribution prompts explain Git terms once per CLI run. Use `layman --help` to read them again.
+
+Confirmed failures block publication. Unknowns remain unknown after review. Personal agreements and maintainer approval need human evidence. Issue forms that require browser fields use a browser handoff.
+
+Layman saves sessions and private briefs under `~/.layman`. It does not add tool files to your contribution. A failed request remains pending until its result is reconciled. Legacy `contribute-state.json` is kept for manual recovery and cannot authorize deletion.
+
+## Search and diagnostics
+
+```bash
+layman --query "rust web servers" -c 20
+layman --query "python ML" --json
+layman --history
+layman --doctor
+layman --help
 ```
 
 ## Development
 
 ```bash
-npm install        # install deps
-npm run dev        # run with tsx (no build step)
-npm run build      # compile TypeScript
-npm run doctor     # run diagnostics
+npm run dev
+npm test
 ```
+
+Read [agent rules](references/AGENTS.md) before changing workflow logic. Read [design](references/DESIGN.md) before changing stages or CLI behavior. See [security](.github/SECURITY.md) for credentials and data handling.
+
+Live provider login and a public GitHub pilot are release checks. Local tests use disposable repositories and mocked APIs.

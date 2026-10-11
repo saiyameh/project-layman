@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { openInEditor } from '../workspace.js';
-import { printInfo } from '../ui/display.js';
+import { printInfo, printWarning } from '../ui/display.js';
 import type { IntentResult } from './intent.js';
 import type { ContributionGuide } from './reader.js';
 
@@ -12,28 +14,21 @@ export async function writeBrief(
   affectedFiles: string[],
   branchSuggestion: string,
   editorCommand: string,
-): Promise<void> {
-  const date = new Date().toISOString().split('T')[0];
-
+): Promise<string> {
   const filesSection = affectedFiles.length > 0
-    ? affectedFiles.map(f => `- \`${f}\``).join('\n')
-    : '- (dependency analysis unavailable — review manually)';
-
-  const prChecklist = guide.prTemplate
-    ? guide.prTemplate
-    : [
-        guide.issueRequired    ? '- [ ] Open or link an issue before submitting'        : '',
-        guide.testCommand      ? `- [ ] Run \`${guide.testCommand}\` and ensure it passes` : '- [ ] Run the test suite and ensure it passes',
-        guide.signOffRequired  ? '- [ ] Sign your commits with `git commit -s` (DCO)'  : '',
-        guide.hasCodeOfConduct ? '- [ ] Follow the Code of Conduct'                    : '',
-        guide.licenseAgreement ? `- [ ] Sign the ${guide.licenseAgreement}`            : '',
-        '- [ ] Update documentation if applicable',
-        '- [ ] Keep the PR focused — one concern per PR',
-      ].filter(Boolean).join('\n');
-
+    ? affectedFiles.map(file => `- \`${file}\``).join('\n')
+    : '- Review files manually.';
+  const prChecklist = guide.prTemplate || [
+    guide.issueRequired ? '- [ ] Open or link an issue.' : '',
+    guide.testCommand ? `- [ ] Run \`${guide.testCommand}\`.` : '- [ ] Run the test suite.',
+    guide.signOffRequired ? '- [ ] Add a sign-off with `git commit -s`. A sign-off is an authorship statement.' : '',
+    guide.hasCodeOfConduct ? '- [ ] Follow the Code of Conduct.' : '',
+    guide.licenseAgreement ? `- [ ] Sign the ${guide.licenseAgreement}.` : '',
+    '- [ ] Update documentation if needed.',
+  ].filter(Boolean).join('\n');
   const content = `# Contribution Brief
 
-Generated: ${date}
+Generated: ${new Date().toISOString()}
 Repository: ${repoPath}
 
 ## Your Intent
@@ -52,45 +47,24 @@ ${filesSection}
 
 \`${branchSuggestion}\`
 
+Use this branch as your separate work area.
+
 ## PR Checklist
+
+A PR asks the project to review your changes.
 
 ${prChecklist}
 `;
-
-  const briefPath = path.join(repoPath, 'LAYMAN_BRIEF.md');
-  fs.writeFileSync(briefPath, content, 'utf-8');
-  printInfo('UGH. WROTE LAYMAN_BRIEF.md.');
-
-  // Append to .gitignore so it doesn't show in git status
-  const gitignorePath = path.join(repoPath, '.gitignore');
-  let gitignore = '';
-  try { gitignore = fs.readFileSync(gitignorePath, 'utf-8'); } catch { /* create fresh */ }
-  if (!gitignore.split('\n').some(l => l.trim() === 'LAYMAN_BRIEF.md')) {
-    const separator = gitignore.length > 0 && !gitignore.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(gitignorePath, gitignore + separator + 'LAYMAN_BRIEF.md\n', 'utf-8');
-    printInfo('UGH. ADDED BRIEF TO .GITIGNORE SO IT NOT BOTHER GIT.');
-  }
-
-  // Write VS Code workspace file if .vscode/ exists or VS Code is the editor
-  const vscodePath = path.join(repoPath, '.vscode');
-  if (fs.existsSync(vscodePath) || editorCommand === 'code' || editorCommand === 'cursor') {
-    try {
-      fs.mkdirSync(vscodePath, { recursive: true });
-      const ws = {
-        folders: [{ path: '.' }],
-        settings: { 'explorer.fileNesting.enabled': true },
-        layman: { affectedFiles },
-      };
-      fs.writeFileSync(
-        path.join(vscodePath, 'layman.code-workspace'),
-        JSON.stringify(ws, null, 2),
-        'utf-8',
-      );
-    } catch { /* non-fatal */ }
-  }
-
-  // Open brief in editor
+  const directory = path.join(os.homedir(), '.layman', 'briefs');
+  const identity = crypto.createHash('sha256').update(`${path.resolve(repoPath)}\0${branchSuggestion}`).digest('hex').slice(0, 12);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const briefPath = path.join(directory, `${identity}-${Date.now()}-${crypto.randomUUID()}.md`);
+  fs.writeFileSync(briefPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  printInfo(`Brief saved: ${briefPath}`);
   try {
     await openInEditor([briefPath], editorCommand);
-  } catch { /* non-fatal if editor fails */ }
+  } catch (error) {
+    printWarning(`Brief saved. Open it in your editor: ${briefPath}. ${(error as Error).message}`);
+  }
+  return briefPath;
 }

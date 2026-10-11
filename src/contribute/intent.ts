@@ -1,11 +1,11 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
 import { Octokit } from '@octokit/rest';
-import { callLLM } from './llm.js';
+import { callLLM, assertSafeModelContext } from './llm.js';
+import { CLI_EXPLANATION_RULES } from '../ui/caveman.js';
 import type { ContributionGuide } from './reader.js';
 import type { RepoContext } from './preflight.js';
 import type { LaymanConfig } from '../config.js';
-import { printError } from '../ui/display.js';
 
 const STOP_WORDS = new Set([
   'the', 'a', 'an', 'is', 'to', 'in', 'of', 'and', 'for', 'with',
@@ -51,23 +51,27 @@ export async function askAndAnalyzeIntent(
   guide: ContributionGuide,
   ctx: RepoContext,
   config: LaymanConfig,
+  rawIntent?: string,
 ): Promise<IntentResult> {
-  const answer = await p.text({
-    message: chalk.yellow('UGH. WHAT YOU WANT DO TO THIS CAVE? (fix bug? add feature? improve docs?)'),
-    placeholder: 'e.g. fix login bug when token expires, add dark mode to settings page',
-    validate: (v) => { if (!v?.trim()) return 'UGH. SAY SOMETHING.'; },
-  });
-  if (p.isCancel(answer)) {
-    p.cancel(chalk.yellow('UGH. CAVE PERSON LEAVE. BYE.'));
-    process.exit(0);
+  let raw = rawIntent?.trim();
+  if (!raw) {
+    const answer = await p.text({
+      message: chalk.yellow('What change will you make?'),
+      placeholder: 'e.g. fix login bug when token expires, add dark mode to settings page',
+      validate: (v) => { if (!v?.trim()) return 'Describe the change.'; },
+    });
+    if (p.isCancel(answer)) {
+      p.cancel(chalk.yellow('Stopped. No changes were made.'));
+      process.exit(0);
+    }
+    raw = (answer as string).trim();
   }
-
-  const raw = (answer as string).trim();
+  assertSafeModelContext(config, raw);
   // Keywords extracted deterministically — not blocked by LLM
   const keywords = extractKeywords(raw);
 
   const s = p.spinner();
-  s.start('UGH. THINKING HARD ABOUT YOUR PLAN...');
+  s.start('Read repository rules and prepare your checklist.');
 
   const octokit = new Octokit({ auth: config.github_token, userAgent: 'project-layman' });
   const similarPRs = await fetchSimilarPRs(octokit, ctx.upstreamOwner, ctx.upstreamRepo, keywords);
@@ -76,7 +80,9 @@ export async function askAndAnalyzeIntent(
     ? `Contribution guidelines:\n${guide.raw}`
     : '(no contribution guidelines found — apply general OSS best practices)';
 
-  const prompt = `You are a senior open-source contributor reviewing a contribution plan.
+  const prompt = `${CLI_EXPLANATION_RULES}
+
+You are a senior open-source contributor reviewing a contribution plan.
 
 Repository: ${ctx.upstreamOwner}/${ctx.upstreamRepo}
 Contributor's intent: ${raw}
@@ -93,19 +99,14 @@ Produce a short prioritised checklist. Format exactly as:
 Focus on: blockers, required steps, gotchas specific to this repo, test requirements, and risks.
 Maximum 8 items. Be concrete and specific to the intent described. No preamble or explanation — just the numbered list.`;
 
-  let checklist: string;
   try {
-    checklist = (await callLLM(config, prompt, 600)).trim();
+    const checklist = (await callLLM(config, prompt, 600)).trim();
+    s.stop('Checklist ready.');
+    console.log('\n' + chalk.bold.yellow('Contribution checklist:'));
+    console.log(checklist + '\n');
+    return { raw, keywords, checklist };
   } catch (err) {
     s.stop('LLM failed');
-    printError(`UGH. BRAIN NO WORK: ${(err as Error).message}`);
-    process.exit(1);
+    throw err;
   }
-
-  s.stop('UGH. GOT PLAN.');
-
-  console.log('\n' + chalk.bold.yellow('Critical Points:'));
-  console.log(checklist + '\n');
-
-  return { raw, keywords, checklist };
 }

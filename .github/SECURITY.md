@@ -1,23 +1,23 @@
 # Security Policy
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-Please **do not** open a public GitHub issue for security vulnerabilities.
+Send a private report to [saiyamjainworkmail@gmail.com](mailto:saiyamjainworkmail@gmail.com). Include the affected command, reproduction steps, and impact. Do not publish credentials or a vulnerability in a public issue.
 
-Email: [saiyamjainworkmail@gmail.com](mailto:saiyamjainworkmail@gmail.com)
+## Credentials
 
-Include:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
+Layman stores API keys, GitHub tokens, and OpenAI OAuth tokens in `~/.layman/config.json`. Config and state writes use private temporary files and atomic replacement. Files use mode `600`; new config directories use mode `700`. Protect this directory and its backups.
 
-We will respond within 7 days.
+OpenAI OAuth uses PKCE, state, nonce, verified identity tokens, and account binding. Failed sign-in leaves the old config in place. Other providers use their supported key or local endpoint paths.
 
-## Token handling
+## Model data
 
-Project Layman stores your GitHub Personal Access Token at `~/.layman/config.json` with file permissions set to `600` (owner read/write only). The token is never logged or written to any file other than that config. It is only sent to:
+The selected provider receives contribution rules, intent, selected changes, draft context, and requested PR status explanations. Known credential values and recognizable secret patterns stop model requests. This scan cannot identify every private value. Review the selected repository and provider before contribution work.
 
-- `api.github.com` — for repo search, fork, PR, and issue operations
-- Your configured LLM provider — only if `description_mode: llm` is enabled
+GitHub receives approved issue and PR content. Git transport uses your Git credentials. Layman does not put API tokens in clone or push URLs.
 
-The `--contribute` flow also scans staged files for patterns matching secrets (`.env`, `*.key`, `*.pem`, credential filenames) and warns before staging.
+## Commands and publication
+
+Approve each repository command before execution. A trusted command can change files, read local files, access the network, or download tools. Layman removes common credential environment variables, limits execution time, and records results.
+
+Review exact files and public text before publication. Tool files and recognizable secrets are excluded or blocked. Undo and cleanup require recorded ownership and fresh Git/GitHub checks. Unmerged local commits are kept.

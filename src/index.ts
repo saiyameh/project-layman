@@ -10,6 +10,7 @@ import {
   configExists,
   loadConfig,
   runSetupWizard,
+  runLLMSetup,
   resetConfig,
   checkConnectivity,
   saveToHistory,
@@ -47,6 +48,8 @@ import {
   askReadmeRepo,
   askEditor,
   askSearchAgain,
+  askStartAction,
+  askContributionPath,
 } from './ui/prompts.js';
 
 import { detectInstalledEditors, openInEditor } from './workspace.js';
@@ -65,9 +68,13 @@ interface CLIFlags {
   json: boolean;
   history: boolean;
   doctor: boolean;
+  brain: boolean;
   contribute: boolean;
   contributePath: string | null;
   undo: boolean;
+  operation: 'prepare' | 'resume' | 'check' | 'submit' | 'status' | 'cleanup';
+  issue: string | undefined;
+  fresh: boolean;
 }
 
 function parseFlags(args: string[]): CLIFlags {
@@ -84,12 +91,23 @@ function parseFlags(args: string[]): CLIFlags {
     json: false,
     history: false,
     doctor: false,
+    brain: false,
     contribute: false,
     contributePath: null,
     undo: false,
+    operation: 'prepare',
+    issue: undefined,
+    fresh: false,
   };
 
+  const operations = args.filter(arg => ['--resume', '--check', '--submit', '--status', '--cleanup'].includes(arg));
+  if (operations.length > 1) throw new Error('Choose one contribution operation.');
   for (let i = 0; i < args.length; i++) {
+    const value = () => {
+      const next = args[++i];
+      if (!next || next.startsWith('-')) throw new Error(`${args[i - 1]} needs a value.`);
+      return next;
+    };
     const arg = args[i];
     switch (arg) {
       case '--reset': flags.reset = true; break;
@@ -98,7 +116,18 @@ function parseFlags(args: string[]): CLIFlags {
       case '--json': flags.json = true; break;
       case '--history': flags.history = true; break;
       case '--doctor': flags.doctor = true; break;
+      case '--brain': flags.brain = true; break;
       case '--undo': flags.undo = true; break;
+      case '--new': flags.fresh = true; flags.contribute = true; break;
+      case '--resume': case '--check': case '--submit': case '--status': case '--cleanup':
+        flags.operation = arg.slice(2) as CLIFlags['operation'];
+        flags.contribute = true;
+        break;
+      case '--issue':
+        flags.issue = value();
+        flags.contribute = true;
+        if (!flags.issue || flags.issue.startsWith('--')) throw new Error('--issue needs a number or GitHub issue URL.');
+        break;
       case '--contribute':
         flags.contribute = true;
         if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -106,26 +135,33 @@ function parseFlags(args: string[]): CLIFlags {
         }
         break;
       case '--mode':
-        flags.mode = args[++i] as 'script' | 'llm';
+        flags.mode = value() as 'script' | 'llm';
         break;
       case '--count': case '-c':
-        flags.count = parseInt(args[++i], 10);
+        { const count = value(); flags.count = /^\d+$/.test(count) ? Number(count) : NaN; }
         break;
       case '--query': case '-q':
-        flags.query = args[++i];
+        flags.query = value();
         break;
       case '--sort': case '-s':
-        flags.sort = args[++i] as 'stars' | 'forks' | 'updated';
+        flags.sort = value() as 'stars' | 'forks' | 'updated';
         break;
       case '--language': case '-l':
-        flags.language = args[++i];
+        flags.language = value();
         break;
       case '--editor':
-        flags.editor = args[++i];
+        flags.editor = value();
         break;
+      default: throw new Error(`Unknown argument: ${arg}. Run --help.`);
     }
   }
 
+  if (flags.mode && !['script', 'llm'].includes(flags.mode)) throw new Error('--mode must be script or llm.');
+  if (flags.count !== null && (!Number.isInteger(flags.count) || flags.count < 1 || flags.count > 50)) throw new Error('--count must be an integer from 1 to 50.');
+  if (!['stars', 'forks', 'updated'].includes(flags.sort)) throw new Error('--sort must be stars, forks, or updated.');
+  if (flags.issue && (flags.undo || ['status', 'cleanup'].includes(flags.operation))) throw new Error('--issue requires preparation, resume, check, or submission.');
+  if (flags.undo && flags.operation !== 'prepare') throw new Error('Use --undo by itself or with --contribute <folder>.');
+  if (flags.fresh && flags.operation !== 'prepare') throw new Error('--new starts preparation. Use it with --contribute.');
   return flags;
 }
 
@@ -142,18 +178,18 @@ function getVersion(): string {
 
 function printHelp(): void {
   console.log(`
-${chalk.bold.yellow('PROJECT LAYMAN')} -- Search GitHub like a caveman
+${chalk.bold.yellow('Layman')} -- Find GitHub projects and prepare contributions
 
-${chalk.bold('DIAGNOSTICS:')}
+${chalk.bold('Diagnostics:')}
   layman --doctor              Check if setup is healthy
 
-${chalk.bold('USAGE:')}
+${chalk.bold('Usage:')}
   layman                       Interactive mode
   layman --query "react hooks" Search directly
   layman --history             View past searches
-  layman --contribute [path]   Guided OSS contribution flow
+  layman --contribute [path]   Guide a contribution from this folder
 
-${chalk.bold('FLAGS:')}
+${chalk.bold('Flags:')}
   ${chalk.cyan('--query, -q')}    <text>     Search query (skip prompt)
   ${chalk.cyan('--count, -c')}    <number>   Number of results (1-50)
   ${chalk.cyan('--sort, -s')}     <field>    Sort by: stars, forks, updated
@@ -163,11 +199,27 @@ ${chalk.bold('FLAGS:')}
   ${chalk.cyan('--json')}                    Output results as JSON
   ${chalk.cyan('--history')}                 View search history
   ${chalk.cyan('--doctor')}                  Run setup diagnostics
-  ${chalk.cyan('--contribute')}   [path]     Start contribution flow (defaults to cwd)
-  ${chalk.cyan('--undo')}                    Undo last --contribute action
+  ${chalk.cyan('--brain')}                   Connect a model; keep other settings
+  ${chalk.cyan('--contribute')}   [path]     Start contribution guide (default: current folder)
+  ${chalk.cyan('--undo')}                    Undo verified owned resources (optional --contribute path)
+  ${chalk.cyan('--resume')}                  Continue saved work
+  ${chalk.cyan('--check')}                   Run trusted project checks
+  ${chalk.cyan('--submit')}                  Review, then publish the contribution
+  ${chalk.cyan('--status')}                  Show PR, CI, and review status
+  ${chalk.cyan('--cleanup')}                 Clean resources Layman owns after merge or closure
+  ${chalk.cyan('--issue')}        <ref>      Link a verified issue number or URL
+  ${chalk.cyan('--new')}                     Prepare another contribution
   ${chalk.cyan('--reset')}                   Reset configuration
   ${chalk.cyan('--help, -h')}               Show this help
   ${chalk.cyan('--version, -v')}            Show version
+
+${chalk.bold('Git words:')}
+  branch  Separate work area
+  fork    Copy of a repository in your GitHub account
+  clone   Local copy of a repository
+  commit  Saved change
+  PR      Request for review before merge
+  CI      Automatic checks that run for a PR
 `);
 }
 
@@ -179,7 +231,7 @@ async function checkForUpdates(currentVersion: string): Promise<void> {
     if (res.ok) {
       const data = await res.json() as { version: string };
       if (data.version && data.version !== currentVersion) {
-        printWarning(`UGH. NEW VERSION ${data.version} EXIST. RUN: npm update -g project-layman`);
+        printWarning(`Version ${data.version} is available. Run: npm update -g project-layman`);
       }
     }
   } catch {
@@ -188,16 +240,15 @@ async function checkForUpdates(currentVersion: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Global exit handlers — Ctrl+C works cleanly at any point
+  // Interactive discovery has no durable contribution actions.
   const gracefulExit = () => {
     console.log('');
-    p.cancel(chalk.yellow('UGH. I LEAVE. BYE.'));
+    p.cancel(chalk.yellow('Stopped.'));
     process.exit(0);
   };
-  process.on('SIGINT', gracefulExit);
-  process.on('SIGTERM', gracefulExit);
-
-  const flags = parseFlags(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const flags = parseFlags(args);
+  const bareInvocation = args.length === 0;
   const version = getVersion();
 
   if (flags.version) {
@@ -209,6 +260,10 @@ async function main(): Promise<void> {
     printBanner();
     printHelp();
     process.exit(0);
+  }
+
+  if (bareInvocation && !process.stdin.isTTY) {
+    throw new Error('Use layman --contribute <folder-or-GitHub-URL> when input is not interactive.');
   }
 
   if (!flags.json) {
@@ -244,17 +299,42 @@ async function main(): Promise<void> {
   if (!configExists()) {
     const online = await checkConnectivity();
     if (!online) {
-      printError('UGH. NO INTERNET. CAVE PERSON NEED WIFI.');
+      printError('No internet connection. Connect to the internet and try again.');
       process.exit(1);
     }
     await runSetupWizard();
+    if (flags.brain) return;
   }
 
   const config = loadConfig();
 
+  if (flags.brain) {
+    await runLLMSetup(config);
+    return;
+  }
+
   if (flags.mode) {
     config.description_mode = flags.mode;
   }
+
+  if (flags.contribute || flags.undo) {
+    const { runContributeFlow } = await import('./contribute/index.js');
+    await runContributeFlow(config, flags.contributePath, flags.undo, { operation: flags.operation, issue: flags.issue, fresh: flags.fresh });
+    return;
+  }
+
+  if (bareInvocation) {
+    const action = await askStartAction();
+    if (action !== 'find') {
+      const rawPath = await askContributionPath(action === 'resume');
+      const { runContributeFlow } = await import('./contribute/index.js');
+      await runContributeFlow(config, rawPath, false, { operation: action === 'resume' ? 'resume' : 'prepare' });
+      return;
+    }
+  }
+
+  process.on('SIGINT', gracefulExit);
+  process.on('SIGTERM', gracefulExit);
 
   // Background update check (non-blocking)
   checkForUpdates(version);
@@ -262,7 +342,7 @@ async function main(): Promise<void> {
   // Connectivity check
   const online = await checkConnectivity();
   if (!online) {
-    printError('UGH. NO INTERNET. CAVE PERSON NEED WIFI.');
+    printError('No internet connection. Connect to the internet and try again.');
     process.exit(1);
   }
 
@@ -270,14 +350,8 @@ async function main(): Promise<void> {
   try {
     await getAuthenticatedUser(config.github_token);
   } catch {
-    printError('UGH. GITHUB TOKEN NO WORK. RUN layman --reset TO FIX.');
+    printError('GitHub token was rejected. Run layman --reset to update it.');
     process.exit(1);
-  }
-
-  if (flags.contribute) {
-    const { runContributeFlow } = await import('./contribute/index.js');
-    await runContributeFlow(config, flags.contributePath, flags.undo);
-    process.exit(0);
   }
 
   let keepSearching = true;
@@ -293,7 +367,7 @@ async function main(): Promise<void> {
     saveToHistory(domain);
 
     // Check cache
-    const cacheKey = `${domain}|${flags.sort}|${flags.language || ''}|${count}`;
+    const cacheKey = `plain-v1|${domain}|${flags.sort}|${flags.language || ''}|${count}`;
     const cached = loadCache(cacheKey);
     let repos: GitHubRepo[];
 
@@ -304,7 +378,7 @@ async function main(): Promise<void> {
       }
     } else {
       const s = p.spinner();
-      if (!flags.json) s.start('UGH. SEARCHING CAVE WALLS...');
+      if (!flags.json) s.start('Searching GitHub...');
 
       try {
         repos = await searchRepos(config.github_token, domain, count, flags.sort, flags.language || undefined);
@@ -319,7 +393,7 @@ async function main(): Promise<void> {
       if (!flags.json) s.stop(`Found ${repos.length} repos`);
 
       if (repos.length === 0) {
-        printError('UGH. NO REPOS FOUND. TRY DIFFERENT WORDS.');
+        printError('No repositories found. Try different search words.');
         if (flags.query) process.exit(0);
         keepSearching = await askSearchAgain();
         continue;
@@ -328,10 +402,10 @@ async function main(): Promise<void> {
       // Generate descriptions
       const describer = createDescriber(config);
       const s2 = p.spinner();
-      if (!flags.json) s2.start('UGH. THINKING HARD...');
+      if (!flags.json) s2.start('Writing repository summaries...');
 
       for (let i = 0; i < repos.length; i++) {
-        if (!flags.json) s2.message(`UGH. THINKING HARD... (${i + 1}/${repos.length})`);
+        if (!flags.json) s2.message(`Writing repository summaries... (${i + 1}/${repos.length})`);
         repos[i].caveman_description = await describer.describe(repos[i]);
       }
 
@@ -357,7 +431,7 @@ async function main(): Promise<void> {
       if (action === 'readme') {
         const repo = await askReadmeRepo(repos);
         const s3 = p.spinner();
-        s3.start('UGH. READING CAVE WALL...');
+        s3.start('Reading README...');
         const readme = await fetchReadme(config.github_token, repo.owner, repo.name);
         s3.stop(`README for ${repo.full_name}`);
         console.log(chalk.dim('─'.repeat(60)));
@@ -384,7 +458,7 @@ async function main(): Promise<void> {
 
         for (const repo of selected) {
           const s4 = p.spinner();
-          s4.start(`UGH. COPYING ${repo.name} INTO YOUR CAVE...`);
+          s4.start(`Creating your fork of ${repo.name}...`);
 
           try {
             await forkRepo(config.github_token, repo.owner, repo.name);
@@ -396,7 +470,7 @@ async function main(): Promise<void> {
           }
 
           const s5 = p.spinner();
-          s5.start(`UGH. DRAGGING ${repo.name} TO YOUR CAVE...`);
+          s5.start(`Cloning ${repo.name} to your computer...`);
 
           try {
             const clonedPath = await cloneRepo(
@@ -409,7 +483,7 @@ async function main(): Promise<void> {
             s5.stop(`Cloned ${repo.name}`);
             if (clonedPath) {
               clonedPaths.push(clonedPath);
-              printSuccess(`${repo.name} NOW IN YOUR CAVE. GOOD.`);
+              printSuccess(`${repo.name} is ready in ${clonedPath}.`);
             }
           } catch (err) {
             s5.stop('Clone failed');
@@ -423,7 +497,7 @@ async function main(): Promise<void> {
 
           try {
             await openInEditor(clonedPaths, editorCommand);
-            printSuccess('CAVE PERSON READY TO BUILD. UGH.');
+            printSuccess('Project opened in your editor.');
           } catch (err) {
             printError((err as Error).message);
           }
@@ -440,10 +514,10 @@ async function main(): Promise<void> {
     }
   }
 
-  p.outro(chalk.bold.yellow('UGH. BYE BYE. COME BACK TO CAVE SOON.'));
+  p.outro(chalk.bold.yellow('Done.'));
 }
 
 main().catch(err => {
-  printError(`UGH. SOMETHING BROKE: ${err.message}`);
+  printError(`Layman stopped: ${err.message}`);
   process.exit(1);
 });
