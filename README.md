@@ -1,4 +1,4 @@
-<img width="411" height="231" alt="Project Layman" src="references/layman.png"/><br>
+<img width="300" height="250" alt="Project Layman" src="references/layman.png"/><br>
 > Write code. Layman handles contribution steps.
 
 > Layman is a CLI harness for GitHub contributions. You write code in your editor. Layman reads repository rules, records checks, prepares public text, and tracks the PR.
