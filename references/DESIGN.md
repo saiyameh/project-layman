@@ -1,9 +1,3 @@
-# Project Design
-
-## Purpose
-
-Layman is a CLI for GitHub contributions. It manages workflow tasks. The developer writes code and answers review feedback.
-
 ## Architecture
 
 - The CLI starts or resumes a contribution, or finds a project. It shows the current step and next action.

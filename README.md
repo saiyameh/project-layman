@@ -1,3 +1,4 @@
+<img width="411" height="231" alt="Project Layman" src="references/layman.png"/><br>
 > Write code. Layman handles contribution steps.
 
 > Layman is a CLI harness for GitHub contributions. You write code in your editor. Layman reads repository rules, records checks, prepares public text, and tracks the PR.
@@ -70,17 +71,14 @@ layman --undo                              # undo a verified owned resource
 
 A PR asks the project to review your changes. A commit saves changes in Git.
 
-CLI text uses short, clear sentences and plain explanations beside Git terms.
-AI explanations use the same rules. Commands, paths, and source errors stay exact. Public drafts follow repository conventions.
+CLI and AI guidance use plain language. Commands, paths, and errors stay exact. Public drafts follow repository rules.
 
-Contribution panels show the current step, repository, branch, saved progress, and next action.
-Check summaries separate passed, failed, skipped, waiting, and unknown results. Open log details when needed.
-Review the exact files, destination, diff, commit message, and PR text before publication.
-Contribution prompts explain Git terms once per CLI run. Use `layman --help` to read them again.
+Panels show the step, repository, branch, saved progress, and next action. Checks show passed, failed, skipped, waiting, or unknown results. Logs are optional.
+Review files, destination, diff, commit message, and PR text before publishing. Git explanations appear once per run; see `layman --help`.
 
-Confirmed failures block publication. Unknowns remain unknown after review. Personal agreements and maintainer approval need human evidence. Issue forms that require browser fields use a browser handoff.
+Confirmed failures block publishing. Unknowns stay unverified. Agreements and maintainer approval require human evidence. Use a browser for unsupported issue forms.
 
-Layman saves sessions and private briefs under `~/.layman`. It does not add tool files to your contribution. A failed request remains pending until its result is reconciled. Legacy `contribute-state.json` is kept for manual recovery and cannot authorize deletion.
+Layman stores sessions and private briefs in `~/.layman`, outside contributions. It reconciles pending requests before retry. Legacy `contribute-state.json` supports manual recovery only and cannot authorize deletion.
 
 ## Search and diagnostics
 
